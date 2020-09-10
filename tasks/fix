@@ -1,0 +1,3 @@
+top=$(nix-shell --run "git rev-parse --show-toplevel")
+nix-shell --run "(cd $top; brittany --write-mode=inplace --config-file=.config/brittany.yaml src/**/*.hs)"
+nix-shell --run "(cd $top; ghc src/**/*.hs -e Spec.check && hlint -v src)"

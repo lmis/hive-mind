@@ -1,0 +1,23 @@
+cabal-version:       >=1.10
+name:                bare-project
+version:             0.1.0.0
+build-type:          Simple
+
+library
+  exposed-modules:
+    HelloWorld
+  hs-source-dirs:
+    src/lib
+  ghc-options: -Wall -O2 -threaded
+  build-depends:       base
+                      ,QuickCheck
+  default-language:    Haskell2010
+
+executable bare-project
+  main-is:             Main.hs
+  hs-source-dirs:
+    src/app
+  ghc-options: -Wall -O2 -threaded
+  build-depends:       base
+                      ,bare-project
+  default-language:    Haskell2010

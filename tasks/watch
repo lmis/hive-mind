@@ -1,0 +1,2 @@
+top=$(nix-shell --run "git rev-parse --show-toplevel")
+nix-shell --run "(cd $top; ghcid -l -T Spec.check src/**/*.hs --reload=src)"

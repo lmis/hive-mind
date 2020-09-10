@@ -1,0 +1,8 @@
+:set -H32m
+:set -isrc/lib
+:set -isrc/test
+:set +m
+:set +c
+:set -Wall
+:set -Werror
+:set -fwarn-incomplete-record-updates
