@@ -1,5 +1,5 @@
 cabal-version:       >=1.10
-name:                bare-project
+name:                hive-mind
 version:             0.1.0.0
 build-type:          Simple
 
@@ -10,14 +10,17 @@ library
     src/lib
   ghc-options: -Wall -O2 -threaded
   build-depends:       base
+                      ,brick
+                      ,raw-strings-qq
+                      ,microlens-platform
                       ,QuickCheck
   default-language:    Haskell2010
 
-executable bare-project
+executable hive-mind
   main-is:             Main.hs
   hs-source-dirs:
     src/app
   ghc-options: -Wall -O2 -threaded
   build-depends:       base
-                      ,bare-project
+                      ,hive-mind
   default-language:    Haskell2010

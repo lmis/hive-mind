@@ -12,7 +12,7 @@ in
   extraPackages ? (pkgs: []),
   shellHook ? ""
 }: with pkgs; haskellPackages.developPackage {
-  name = "bare-project";
+  name = "hive-mind";
   root = nix-gitignore.gitignoreSource [".gitignore" "default.nix"] ./.;
   modifier = drv: haskell.lib.overrideCabal drv (old: {
     inherit shellHook;
