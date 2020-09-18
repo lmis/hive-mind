@@ -5,8 +5,6 @@
 -- TODO: Cleanup
 module Main
   ( main
-  , Decision(..)
-  , hiveMind
   , randomGenerator
   , closeHivelings
   , closeObjects
@@ -55,11 +53,14 @@ import           Brick.BChan                    ( BChan
                                                 )
 import           System.Random                  ( StdGen
                                                 , mkStdGen
+                                                , split
+                                                , randomR
                                                 )
 import           Lens.Micro                     ( (&)
                                                 , (^.)
                                                 , (^..)
                                                 , (%~)
+                                                , (.~)
                                                 , each
                                                 , to
                                                 )
@@ -70,8 +71,9 @@ type Position = (Int, Int)
 data Hiveling = Hiveling {
   _hasNutrition :: !Bool,
   _spreadsPheromones :: !Bool                                 ,
-  _position :: !Position
-} deriving (Eq, Show)
+  _position :: !Position,
+  _randomGenerator :: StdGen
+} deriving (Show)
 makeLenses ''Hiveling
 
 data ObjectType = Nutrition
@@ -89,7 +91,7 @@ data GameState = GameState {
   _objects :: [GameObject],
   _hivelings :: [Hiveling],
   _score :: !Int,
-  _randomGenerator :: StdGen
+  _randomGen :: StdGen
 } deriving (Show)
 makeLenses ''GameState
 
@@ -97,12 +99,13 @@ data HiveMindInput = HiveMindInput {
   _closeObjects :: [GameObject],
   _closeHivelings :: [Hiveling],
   _carriesNutrition :: !Bool,
-  _isSpreadingPheromones :: !Bool
-} deriving (Eq, Show)
+  _isSpreadingPheromones :: !Bool,
+  _randomInput :: StdGen
+} deriving (Show)
 makeLenses ''HiveMindInput
 
 
-data Direction = North | NorthEast | East | SouthEast | South | SouthWest | West | NorthWest deriving (Eq, Show, Ord)
+data Direction = North | NorthEast | East | SouthEast | South | SouthWest | West | NorthWest deriving (Eq, Show, Ord, Enum, Bounded)
 data Decision = Move Direction | Pickup | Drop
 
 type Name = ()
@@ -113,15 +116,19 @@ data AppState = AppState {
 
 makeLenses ''AppState
 
-defaultHiveling :: Position -> Hiveling
-defaultHiveling _position = Hiveling { _hasNutrition = False, _spreadsPheromones = False, .. }
+spawnHiveling :: Position -> GameState -> GameState
+spawnHiveling _position s = s & randomGen .~ left & hivelings %~ (new :)
+ where
+  (left, right) = split $ s ^. randomGen
+  new           = Hiveling { _hasNutrition = False, _spreadsPheromones = False, _randomGenerator = right, .. }
 
 startingState :: GameState
-startingState = GameState { _objects         = entrance : boundary ++ nutrition
-                          , _hivelings       = [ defaultHiveling (1, y) | y <- [1 .. 4] ]
-                          , _score           = 0
-                          , _randomGenerator = mkStdGen 42
-                          }
+startingState =
+  foldr
+      spawnHiveling
+      GameState { _objects = entrance : boundary ++ nutrition, _hivelings = [], _score = 0, _randomGen = mkStdGen 42 }
+    $   (1, )
+    <$> [1 .. 4]
  where
   entrance  = GameObject HiveEntrance (0, 0)
   boundary  = GameObject Obstacle <$> ((,) <$> [-10 .. 10] <*> [-10, 10]) ++ ((,) <$> [-10, 10] <*> [-10 .. 10])
@@ -164,32 +171,39 @@ distance :: Position -> Position -> Double
 distance p q = norm $ relativePosition p q
 
 doGameStep :: GameState -> GameState
-doGameStep s = s & hivelings %~ (takeDecisions . map addInput)
+doGameStep s = s & hivelings %~ (takeDecisions . map makeInput)
  where
-  addInput :: Hiveling -> (Hiveling, HiveMindInput)
-  addInput h =
-    ( h
-    , HiveMindInput { _closeHivelings        = filter (\other -> isClose h $ other ^. position) (s ^. hivelings)
-                    , _closeObjects          = filter (\obj -> isClose h $ obj ^. objectPosition) (s ^. objects)
-                    , _isSpreadingPheromones = h ^. spreadsPheromones
-                    , _carriesNutrition      = h ^. hasNutrition
-                    }
-    )
+  makeInput :: Hiveling -> (Hiveling, HiveMindInput)
+  makeInput h =
+    let (g', g'') = split $ h ^. randomGenerator
+    in  ( h & randomGenerator .~ g'
+        , HiveMindInput { _closeHivelings        = filter (\other -> isClose h $ other ^. position) (s ^. hivelings)
+                        , _closeObjects          = filter (\obj -> isClose h $ obj ^. objectPosition) (s ^. objects)
+                        , _isSpreadingPheromones = h ^. spreadsPheromones
+                        , _carriesNutrition      = h ^. hasNutrition
+                        , _randomInput           = g''
+                        }
+        )
   isClose :: Hiveling -> Position -> Bool
   isClose h p = distance p (h ^. position) < 2
   takeDecisions :: [(Hiveling, HiveMindInput)] -> [Hiveling]
   takeDecisions = map $ \(h, i) -> applyDecision (h, hiveMind i)
   applyDecision :: (Hiveling, Decision) -> Hiveling
   applyDecision (h, Move d) = h & position %~ tryMove d
-  applyDecision (_, _     ) = undefined --TODO
+  applyDecision (_, Pickup) = undefined --TODO
+  applyDecision (_, Drop  ) = undefined --TODO
   tryMove :: Direction -> Position -> Position
-  tryMove d p
-    | next `notElem` (s ^.. hivelings . each . position) && next `notElem` (s ^.. objects . each . objectPosition) = next
-    | otherwise = p
+  tryMove d p | next `notElem` (s ^.. hivelings . each . position) ++ (s ^.. objects . each . objectPosition) = next
+              | otherwise = p
     where next = move d p
 
 hiveMind :: HiveMindInput -> Decision
-hiveMind _ = Move North
+hiveMind inp =
+  Move
+    $ let minDirection = (minBound :: Direction)
+          maxDirection = maxBound :: Direction
+          (r, _)       = randomR (fromEnum minDirection, fromEnum maxDirection) (inp ^. randomInput)
+      in  toEnum r
 
 move :: Direction -> Position -> Position
 move d (x, y) = (x + dx, y + dy) where (dx, dy) = direction2offset d
