@@ -15,12 +15,12 @@ module Main
   )
 where
 
-import           Data.Maybe                     ( catMaybes )
+import           GHC.Float                      ( int2Double )
 import           Data.Map.Strict                ( Map
                                                 , (!?)
-                                                , elems
+                                                , fromListWith
                                                 )
-import qualified Data.Map.Strict               as Map
+import           Data.Maybe                     ( fromMaybe )
 import           Control.Monad.IO.Class         ( liftIO )
 import           Control.Monad                  ( forever
                                                 , void
@@ -58,7 +58,10 @@ import           System.Random                  ( StdGen
                                                 )
 import           Lens.Micro                     ( (&)
                                                 , (^.)
+                                                , (^..)
                                                 , (%~)
+                                                , each
+                                                , to
                                                 )
 import           Lens.Micro.Platform            ( makeLenses )
 
@@ -71,22 +74,28 @@ data Hiveling = Hiveling {
 } deriving (Eq, Show)
 makeLenses ''Hiveling
 
-data GameObject = Nutrition
+data ObjectType = Nutrition
                 | HiveEntrance
                 | Pheromone
                 | Obstacle deriving (Eq, Show)
 
+data GameObject = GameObject {
+  _objectType :: !ObjectType,
+  _objectPosition :: !Position
+} deriving (Eq, Show)
+makeLenses ''GameObject
+
 data GameState = GameState {
-  _objects :: Map Position GameObject,
-  _hivelings :: Map Position Hiveling,
+  _objects :: [GameObject],
+  _hivelings :: [Hiveling],
   _score :: !Int,
   _randomGenerator :: StdGen
 } deriving (Show)
 makeLenses ''GameState
 
 data HiveMindInput = HiveMindInput {
-  _closeObjects :: Map Position GameObject,
-  _closeHivelings :: Map Position Hiveling,
+  _closeObjects :: [GameObject],
+  _closeHivelings :: [Hiveling],
   _carriesNutrition :: !Bool,
   _isSpreadingPheromones :: !Bool
 } deriving (Eq, Show)
@@ -108,17 +117,15 @@ defaultHiveling :: Position -> Hiveling
 defaultHiveling _position = Hiveling { _hasNutrition = False, _spreadsPheromones = False, .. }
 
 startingState :: GameState
-startingState = GameState { _objects         = Map.fromList $ entrance : boundary ++ nutrition
-                          , _hivelings       = Map.fromList [ ((0, y), defaultHiveling (0, y)) | y <- [1 .. 4] ]
+startingState = GameState { _objects         = entrance : boundary ++ nutrition
+                          , _hivelings       = [ defaultHiveling (0, y) | y <- [1 .. 4] ]
                           , _score           = 0
                           , _randomGenerator = mkStdGen 42
                           }
  where
-  entrance = ((0, 0), HiveEntrance)
-  boundary =
-    [ ((x, y), Obstacle) | x <- [-10 .. 10], y <- [-10, 10] ]
-      ++ [ ((x, y), Obstacle) | x <- [-10, 10], y <- [-10 .. 10] ]
-  nutrition = [ ((9, y), Nutrition) | y <- [-10 .. 0] ]
+  entrance  = GameObject HiveEntrance (0, 0)
+  boundary  = GameObject Obstacle <$> ((,) <$> [-10 .. 10] <*> [-10, 10]) ++ ((,) <$> [-10, 10] <*> [-10 .. 10])
+  nutrition = GameObject Nutrition . (9, ) <$> [-10 .. 0]
 
 app :: App AppState AppEvent Name
 app = App { appDraw         = drawUI
@@ -147,27 +154,31 @@ advanceGame chan = forkIO $ forever $ do
   writeBChan chan AdvanceGame
   threadDelay 100000
 
+norm :: Position -> Double
+norm (x, y) = sqrt . int2Double $ x ^ (2 :: Int) + y ^ (2 :: Int)
+
+relativePosition :: Position -> Position -> Position
+relativePosition (ox, oy) (x, y) = (x - ox, y - oy)
+
+distance :: Position -> Position -> Double
+distance p q = norm $ relativePosition p q
+
 doGameStep :: GameState -> GameState
-doGameStep s = s & hivelings %~ (takeDecisions . inputs)
+doGameStep s = s & hivelings %~ (takeDecisions . fmap toInput)
  where
-  inputs :: Map Position Hiveling -> [(Hiveling, HiveMindInput)]
-  inputs hs = toInput <$> elems hs
   toInput :: Hiveling -> (Hiveling, HiveMindInput)
   toInput h =
-    let (x, y) = h ^. position
-    in
-      ( h
-      , HiveMindInput
-        { _closeHivelings        = Map.fromList $ catMaybes
-          [ ((x', y'), ) <$> ((s ^. hivelings) !? (x', y')) | x' <- [x - 2 .. x + 2], y' <- [y - 2 .. y + 2] ]
-        , _closeObjects          = Map.fromList
-          $ catMaybes [ ((x', y'), ) <$> ((s ^. objects) !? (x', y')) | x' <- [x - 2 .. x + 2], y' <- [y - 2 .. y + 2] ]
-        , _isSpreadingPheromones = h ^. spreadsPheromones
-        , _carriesNutrition      = h ^. hasNutrition
-        }
-      )
-  takeDecisions :: [(Hiveling, HiveMindInput)] -> Map Position Hiveling
-  takeDecisions inp = Map.fromList $ (\(h, i) -> (h ^. position, applyDecision (h, hiveMind i))) <$> inp
+    ( h
+    , HiveMindInput { _closeHivelings        = filter (\other -> isClose h $ other ^. position) (s ^. hivelings)
+                    , _closeObjects          = filter (\obj -> isClose h $ obj ^. objectPosition) (s ^. objects)
+                    , _isSpreadingPheromones = h ^. spreadsPheromones
+                    , _carriesNutrition      = h ^. hasNutrition
+                    }
+    )
+  isClose :: Hiveling -> Position -> Bool
+  isClose h p = distance p (h ^. position) < 2
+  takeDecisions :: [(Hiveling, HiveMindInput)] -> [Hiveling]
+  takeDecisions = fmap $ \(h, i) -> applyDecision (h, hiveMind i)
   applyDecision :: (Hiveling, Decision) -> Hiveling
   applyDecision (h, Move d) = h & position %~ move d
   applyDecision (_, _     ) = undefined
@@ -176,19 +187,18 @@ hiveMind :: HiveMindInput -> Decision
 hiveMind _ = Move North
 
 move :: Direction -> Position -> Position
-move d     (x, y) = (x + dx, y + dy)
-  where (dx, dy) = direction2offset d
+move d (x, y) = (x + dx, y + dy) where (dx, dy) = direction2offset d
 
 direction2offset :: Direction -> Position
 direction2offset d = case d of
-            North     -> (0,-1)
-            NorthEast -> (1,-1)
-            East      -> (1, 0)
-            SouthEast -> (1, 1)
-            South     -> (0, 1)
-            SouthWest -> (-1,1)
-            West      -> (-1, 0)
-            NorthWest -> (-1, -1)
+  North     -> (0, -1)
+  NorthEast -> (1, -1)
+  East      -> (1, 0)
+  SouthEast -> (1, 1)
+  South     -> (0, 1)
+  SouthWest -> (-1, 1)
+  West      -> (-1, 0)
+  NorthWest -> (-1, -1)
 
 handleEvent :: AppState -> BrickEvent Name AppEvent -> EventM Name (Next AppState)
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = halt s
@@ -199,18 +209,23 @@ handleEvent s _ = continue s
 drawGameState :: GameState -> Widget Name
 drawGameState g = str $ unlines [ [ renderPosition (x, y) | x <- [-10 .. 10] ] | y <- [-10 .. 10] ]
  where
+  pointsOfInterest :: Map Position Char
+  pointsOfInterest =
+    fromListWith const
+      $  (g ^.. hivelings . each . to (\h -> (h ^. position, renderHiveling h)))
+      ++ (g ^.. objects . each . to (\obj -> (obj ^. objectPosition, obj ^. objectType . to renderType)))
   renderPosition :: Position -> Char
-  renderPosition p = maybe (maybe ' ' renderObject ((g ^. objects) !? p)) renderHiveling ((g ^. hivelings) !? p)
+  renderPosition p = fromMaybe ' ' (pointsOfInterest !? p)
   renderHiveling :: Hiveling -> Char
   renderHiveling h | h ^. hasNutrition && h ^. spreadsPheromones = 'û'
                    | h ^. hasNutrition      = 'î'
                    | h ^. spreadsPheromones = 'u'
                    | otherwise              = 'i'
-  renderObject :: GameObject -> Char
-  renderObject Nutrition    = 'N'
-  renderObject HiveEntrance = 'H'
-  renderObject Pheromone    = 'o'
-  renderObject Obstacle     = 'X'
+  renderType :: ObjectType -> Char
+  renderType Nutrition    = 'N'
+  renderType HiveEntrance = 'H'
+  renderType Pheromone    = 'o'
+  renderType Obstacle     = 'X'
 
 drawUI :: AppState -> [Widget Name]
 drawUI s =
