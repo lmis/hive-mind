@@ -118,7 +118,7 @@ defaultHiveling _position = Hiveling { _hasNutrition = False, _spreadsPheromones
 
 startingState :: GameState
 startingState = GameState { _objects         = entrance : boundary ++ nutrition
-                          , _hivelings       = [ defaultHiveling (0, y) | y <- [1 .. 4] ]
+                          , _hivelings       = [ defaultHiveling (1, y) | y <- [1 .. 4] ]
                           , _score           = 0
                           , _randomGenerator = mkStdGen 42
                           }
@@ -142,7 +142,7 @@ main = do
   _          <- advanceGame chan
 
   initialVty <- buildVty
-  void $ customMain initialVty buildVty (Just chan) app $ AppState { _gameState = startingState, _iteration = 0, .. }
+  void $ customMain initialVty buildVty (Just chan) app AppState { _gameState = startingState, _iteration = 0, .. }
  where
   buildVty = do
     vty <- V.mkVty V.defaultConfig
@@ -164,10 +164,10 @@ distance :: Position -> Position -> Double
 distance p q = norm $ relativePosition p q
 
 doGameStep :: GameState -> GameState
-doGameStep s = s & hivelings %~ (takeDecisions . fmap toInput)
+doGameStep s = s & hivelings %~ (takeDecisions . map addInput)
  where
-  toInput :: Hiveling -> (Hiveling, HiveMindInput)
-  toInput h =
+  addInput :: Hiveling -> (Hiveling, HiveMindInput)
+  addInput h =
     ( h
     , HiveMindInput { _closeHivelings        = filter (\other -> isClose h $ other ^. position) (s ^. hivelings)
                     , _closeObjects          = filter (\obj -> isClose h $ obj ^. objectPosition) (s ^. objects)
@@ -178,10 +178,15 @@ doGameStep s = s & hivelings %~ (takeDecisions . fmap toInput)
   isClose :: Hiveling -> Position -> Bool
   isClose h p = distance p (h ^. position) < 2
   takeDecisions :: [(Hiveling, HiveMindInput)] -> [Hiveling]
-  takeDecisions = fmap $ \(h, i) -> applyDecision (h, hiveMind i)
+  takeDecisions = map $ \(h, i) -> applyDecision (h, hiveMind i)
   applyDecision :: (Hiveling, Decision) -> Hiveling
-  applyDecision (h, Move d) = h & position %~ move d
-  applyDecision (_, _     ) = undefined
+  applyDecision (h, Move d) = h & position %~ tryMove d
+  applyDecision (_, _     ) = undefined --TODO
+  tryMove :: Direction -> Position -> Position
+  tryMove d p
+    | next `notElem` (s ^.. hivelings . each . position) && next `notElem` (s ^.. objects . each . objectPosition) = next
+    | otherwise = p
+    where next = move d p
 
 hiveMind :: HiveMindInput -> Decision
 hiveMind _ = Move North
@@ -222,17 +227,18 @@ drawGameState g = str $ unlines [ [ renderPosition (x, y) | x <- [-10 .. 10] ] |
                    | h ^. spreadsPheromones = 'u'
                    | otherwise              = 'i'
   renderType :: ObjectType -> Char
-  renderType Nutrition    = 'N'
-  renderType HiveEntrance = 'H'
-  renderType Pheromone    = 'o'
-  renderType Obstacle     = 'X'
+  renderType t = case t of
+    Nutrition    -> 'N'
+    HiveEntrance -> 'H'
+    Pheromone    -> 'o'
+    Obstacle     -> 'X'
 
 drawUI :: AppState -> [Widget Name]
 drawUI s =
   [ C.hCenter
-      $   labeledVBox "Hive Mind"
+      .   labeledVBox "Hive Mind"
       $   C.hCenter
-      <$> [labeledVBox "Score" [padLeftRight 10 $ str . show $ s ^. gameState . score], drawGameState (s ^. gameState)]
+      <$> [labeledVBox "Score" [padLeftRight 10 . str . show $ s ^. gameState . score], drawGameState $ s ^. gameState]
   ]
 
 theMap :: AttrMap
