@@ -1,7 +1,5 @@
 {-# LANGUAGE TupleSections, RecordWildCards, NamedFieldPuns, TemplateHaskell #-}
--- TODO: Track and pass random gen
 -- TODO: Implement hive mind logic
--- TODO: allow environment interaction in decision
 -- TODO: Cleanup
 module Main
   ( main
@@ -63,6 +61,7 @@ import           Lens.Micro                     ( (&)
                                                 , (.~)
                                                 , each
                                                 , to
+                                                , filtered
                                                 )
 import           Lens.Micro.Platform            ( makeLenses )
 
@@ -197,7 +196,7 @@ doGameStep s = s & hivelings %~ (takeDecisions . map makeInput)
   tryMove d p
     | next
       `notElem` (s ^.. hivelings . each . position)
-      ++        ((^. objectPosition) <$> filter (^. objectType . to (== Obstacle)) (s ^.. objects . each))
+      ++        (s ^.. objects . each . filtered (^. objectType . to (== Obstacle)) . objectPosition)
     = next
     | otherwise
     = p
