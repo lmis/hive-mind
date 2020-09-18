@@ -193,8 +193,14 @@ doGameStep s = s & hivelings %~ (takeDecisions . map makeInput)
   applyDecision (_, Pickup) = undefined --TODO
   applyDecision (_, Drop  ) = undefined --TODO
   tryMove :: Direction -> Position -> Position
-  tryMove d p | next `notElem` (s ^.. hivelings . each . position) ++ (s ^.. objects . each . objectPosition) = next
-              | otherwise = p
+  -- TODO: More elegant with folded?
+  tryMove d p
+    | next
+      `notElem` (s ^.. hivelings . each . position)
+      ++        ((^. objectPosition) <$> filter (^. objectType . to (== Obstacle)) (s ^.. objects . each))
+    = next
+    | otherwise
+    = p
     where next = move d p
 
 hiveMind :: HiveMindInput -> Decision
