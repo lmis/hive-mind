@@ -130,7 +130,7 @@ startingState =
     <$> [1 .. 4]
  where
   entrance  = GameObject HiveEntrance (0, 0)
-  boundary  = GameObject Obstacle <$> ((,) <$> [-10 .. 10] <*> [-10, 10]) ++ ((,) <$> [-10, 10] <*> [-10 .. 10])
+  boundary  = GameObject Obstacle <$> ((,) <$> [-20 .. 20] <*> [-20, 20]) ++ ((,) <$> [-20, 20] <*> [-20 .. 20])
   nutrition = GameObject Nutrition . (9, ) <$> [-10 .. 0]
 
 app :: App AppState AppEvent Name
@@ -231,7 +231,7 @@ handleEvent s (AppEvent AdvanceGame) = continue $ s & iteration %~ (+ 1) & gameS
 handleEvent s _ = continue s
 
 drawGameState :: GameState -> Widget Name
-drawGameState g = str $ unlines [ [ renderPosition (x, y) | x <- [-10 .. 10] ] | y <- [-10 .. 10] ]
+drawGameState g = str $ unlines [ [ renderPosition (x, y) | x <- [-20 .. 20] ] | y <- [-20 .. 20] ]
  where
   pointsOfInterest :: Map Position Char
   pointsOfInterest =
