@@ -1,6 +1,7 @@
-{-# LANGUAGE TupleSections, RecordWildCards, NamedFieldPuns, TemplateHaskell #-}
+{-# LANGUAGE RankNTypes, TupleSections, RecordWildCards, NamedFieldPuns, TemplateHaskell #-}
 -- TODO: Implement hive mind logic
--- TODO: Cleanup
+-- TODO: Cleanup variable names
+-- TODO: Hiveling interaction?
 module Main
   ( main
   , randomGenerator
@@ -54,11 +55,14 @@ import           System.Random                  ( StdGen
                                                 , split
                                                 , randomR
                                                 )
-import           Lens.Micro                     ( (&)
+import           Lens.Micro                     ( Lens'
+                                                , (&)
+                                                , (^?)
                                                 , (^.)
                                                 , (^..)
                                                 , (%~)
                                                 , (.~)
+                                                , has
                                                 , each
                                                 , to
                                                 , filtered
@@ -105,7 +109,7 @@ makeLenses ''HiveMindInput
 
 
 data Direction = North | NorthEast | East | SouthEast | South | SouthWest | West | NorthWest deriving (Eq, Show, Ord, Enum, Bounded)
-data Decision = Move Direction | Pickup | Drop
+data Decision = Move Direction | Pickup Direction | Drop Direction
 
 type Name = ()
 data AppState = AppState {
@@ -188,19 +192,26 @@ doGameStep s = s & hivelings %~ (takeDecisions . map makeInput)
   takeDecisions :: [(Hiveling, HiveMindInput)] -> [Hiveling]
   takeDecisions = map $ \(h, i) -> applyDecision (h, hiveMind i)
   applyDecision :: (Hiveling, Decision) -> Hiveling
-  applyDecision (h, Move d) = h & position %~ tryMove d
-  applyDecision (_, Pickup) = undefined --TODO
-  applyDecision (_, Drop  ) = undefined --TODO
+  applyDecision (h, Move d  ) = h & position %~ tryMove d
+  applyDecision (h, Pickup d) = case objectTypeAt (move d $ h ^. position) of
+    Just Nutrition -> undefined
+    _              -> h
+  applyDecision (h, Drop d) = case objectTypeAt (move d $ h ^. position) of
+    Just HiveEntrance -> undefined
+    Nothing           -> undefined --Check for hivelings, otherwise drop
+    _                 -> h
+  -- TODO: Cleanup
   tryMove :: Direction -> Position -> Position
-  -- TODO: More elegant with folded?
-  tryMove d p
-    | next
-      `notElem` (s ^.. hivelings . each . position)
-      ++        (s ^.. objects . each . filtered (^. objectType . to (== Obstacle)) . objectPosition)
-    = next
-    | otherwise
-    = p
-    where next = move d p
+  tryMove d p =
+    let next = move d p
+    in  case objectTypeAt next of
+          Nothing       -> if has (hivelings . each . position . filtered (== next)) s then p else next
+          Just Obstacle -> p
+          _             -> next
+  partIs :: Eq a => Lens' GameObject a -> a -> GameObject -> Bool
+  partIs l x = (^. l . to (== x))
+  objectTypeAt :: Position -> Maybe ObjectType
+  objectTypeAt p = s ^? objects . each . filtered (objectPosition `partIs` p) . objectType
 
 hiveMind :: HiveMindInput -> Decision
 hiveMind inp =
