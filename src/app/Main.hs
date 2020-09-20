@@ -1,12 +1,8 @@
 {-# LANGUAGE RankNTypes, TupleSections, RecordWildCards, NamedFieldPuns, TemplateHaskell #-}
--- TODO: Implement hive mind logic
--- TODO: Cleanup variable names
--- TODO: Hiveling interaction?
 module Main
   ( main
+  -- Unused lenses
   , closeHivelings
-  , closeObjects
-  , carriesNutrition
   , isSpreadingPheromones
   )
 where
@@ -79,15 +75,9 @@ import           Lens.Micro                     ( Lens'
                                                 )
 import           Lens.Micro.Platform            ( makeLenses )
 
-data AppEvent = AdvanceGame deriving (Eq, Show, Ord)
 type Position = (Int, Int)
-data Hiveling = Hiveling {
-  _identifier :: !Int,
-  _hasNutrition :: !Bool,
-  _spreadsPheromones :: !Bool                                 ,
-  _position :: !Position
-} deriving (Eq, Show)
-makeLenses ''Hiveling
+data Direction = Center | North | NorthEast | East | SouthEast | South | SouthWest | West | NorthWest deriving (Eq, Show, Ord, Enum, Bounded)
+data Decision = Move Direction | Pickup Direction | Drop Direction
 
 data ObjectType = Nutrition
                 | HiveEntrance
@@ -100,13 +90,13 @@ data GameObject = GameObject {
 } deriving (Eq, Show)
 makeLenses ''GameObject
 
-data GameState = GameState {
-  _objects :: [GameObject],
-  _hivelings :: [Hiveling],
-  _score :: !Int,
-  _randomGen :: StdGen
-} deriving (Show)
-makeLenses ''GameState
+data Hiveling = Hiveling {
+  _identifier :: !Int,
+  _hasNutrition :: !Bool,
+  _spreadsPheromones :: !Bool                                 ,
+  _position :: !Position
+} deriving (Eq, Show)
+makeLenses ''Hiveling
 
 data HiveMindInput = HiveMindInput {
   _closeObjects :: [GameObject],
@@ -117,18 +107,30 @@ data HiveMindInput = HiveMindInput {
 } deriving (Show)
 makeLenses ''HiveMindInput
 
-
-data Direction = Center | North | NorthEast | East | SouthEast | South | SouthWest | West | NorthWest deriving (Eq, Show, Ord, Enum, Bounded)
-data Decision = Move Direction | Pickup Direction | Drop Direction
+data GameState = GameState {
+  _objects :: [GameObject],
+  _hivelings :: [Hiveling],
+  _score :: !Int,
+  _randomGen :: StdGen
+} deriving (Show)
+makeLenses ''GameState
 
 type Name = ()
+data AppEvent = AdvanceGame deriving (Eq, Show, Ord)
 data AppState = AppState {
   _gameState :: !GameState,
   _iteration :: !Int
 } deriving (Show)
-
 makeLenses ''AppState
 
+-- Traversals
+withId :: Int -> Traversal' Hiveling Hiveling
+withId x = filtered $ (== x) . (^. identifier)
+
+withType :: ObjectType -> Traversal' GameObject GameObject
+withType t = filtered $ (== t) . (^. objectType)
+
+-- Game init & advancing
 spawnHiveling :: Int -> Position -> GameState -> GameState
 spawnHiveling _identifier _position s = s & hivelings %~ (new :)
   where new = Hiveling { _hasNutrition = False, _spreadsPheromones = False, .. }
@@ -154,41 +156,6 @@ startingState =
   sides             = (,) <$> [-20, 20] <*> [-20 .. 20]
   nutrition         = (,) <$> [-10 .. 10] <*> [-10, 10]
 
-app :: App AppState AppEvent Name
-app = App { appDraw         = drawUI
-          , appChooseCursor = neverShowCursor
-          , appHandleEvent  = handleEvent
-          , appStartEvent   = return
-          , appAttrMap      = const theMap
-          }
-
-main :: IO ()
-main = do
-  -- channel to inject events into main loop
-  chan       <- newBChan 10
-  _          <- advanceGame chan
-
-  initialVty <- buildVty
-  void $ customMain initialVty buildVty (Just chan) app AppState { _gameState = startingState, _iteration = 0, .. }
- where
-  buildVty = do
-    vty <- V.mkVty V.defaultConfig
-    liftIO $ V.setMode (V.outputIface vty) V.Mouse True
-    return vty
-
-advanceGame :: BChan AppEvent -> IO ThreadId
-advanceGame chan = forkIO $ forever $ do
-  writeBChan chan AdvanceGame
-  threadDelay 100000
-
-norm :: Position -> Double
-norm (x, y) = sqrt . int2Double $ x ^ (2 :: Int) + y ^ (2 :: Int)
-
-relativePosition :: Position -> Position -> Position
-relativePosition (ox, oy) (x, y) = (x - ox, y - oy)
-
-distance :: Position -> Position -> Double
-distance p q = norm $ relativePosition p q
 
 doGameStep :: State GameState ()
 doGameStep = do
@@ -245,7 +212,6 @@ doGameStep = do
     targetType d = objectTypeAt (hivelingPos `go` d) s
     currentHasNutrition :: Traversal' GameState Bool
     currentHasNutrition = hivelings . each . withId (h ^. identifier) . hasNutrition
-  -- TODO: Cleanup
   tryMove :: GameState -> Direction -> Position -> Position
   tryMove s d p =
     let next = p `go` d
@@ -258,20 +224,16 @@ doGameStep = do
   objectTypeAt :: Position -> GameState -> Maybe ObjectType
   objectTypeAt p = (^? objects . each . filtered (objectPosition `partIs` p) . objectType)
 
-withId :: Int -> Traversal' Hiveling Hiveling
-withId x = filtered $ (== x) . (^. identifier)
 
-withType :: ObjectType -> Traversal' GameObject GameObject
-withType t = filtered $ (== t) . (^. objectType)
-
+-- Hive mind
 hiveMind :: HiveMindInput -> Decision
-hiveMind inp
-  | inp ^. carriesNutrition = case inp ^? closeObjects . each . withType HiveEntrance of
+hiveMind h
+  | h ^. carriesNutrition = case h ^? closeObjects . each . withType HiveEntrance of
     Just obj -> case obj ^. objectPosition . to offset2Direction of
       Just direction -> Drop direction
       Nothing        -> Move $ obj ^. objectPosition . to closestDirection
     Nothing -> randomWalk
-  | otherwise = case inp ^? closeObjects . each . withType Nutrition of
+  | otherwise = case h ^? closeObjects . each . withType Nutrition of
     Just obj -> case obj ^. objectPosition . to offset2Direction of
       Just direction -> Pickup direction
       Nothing        -> Move $ obj ^. objectPosition . to closestDirection
@@ -281,11 +243,21 @@ hiveMind inp
     Move
       $ let minDirection = (minBound :: Direction)
             maxDirection = maxBound :: Direction
-            (r, _)       = randomR (fromEnum minDirection, fromEnum maxDirection) (inp ^. randomInput)
+            (r, _)       = randomR (fromEnum minDirection, fromEnum maxDirection) (h ^. randomInput)
         in  toEnum r
 
+-- Direction
+norm :: Position -> Double
+norm (x, y) = sqrt . int2Double $ x ^ (2 :: Int) + y ^ (2 :: Int)
+
+relativePosition :: Position -> Position -> Position
+relativePosition (ox, oy) (x, y) = (x - ox, y - oy)
+
+distance :: Position -> Position -> Double
+distance p q = norm $ relativePosition p q
+
 go :: Position -> Direction -> Position
-go (x, y) d = (x + dx, y + dy) where (dx, dy) = direction2Offset d
+go (x, y) d = let (dx, dy) = direction2Offset d in (x + dx, y + dy)
 
 direction2Offset :: Direction -> Position
 direction2Offset d = case d of
@@ -303,18 +275,46 @@ offset2Direction :: Position -> Maybe Direction
 offset2Direction p = find ((== p) . direction2Offset) [minBound .. maxBound]
 
 closestDirection :: Position -> Direction
-closestDirection (x, y) = fromJust $ offset2Direction (limit x, limit y) where limit = clamp (-1) 1
+closestDirection (x, y) = fromJust $ offset2Direction (limit x, limit y)
+ where
+  limit :: Int -> Int
+  limit n = min 1 $ max (-1) n
 
-clamp :: Int -> Int -> Int -> Int
-clamp low high x = min high (max low x)
+-- App plumbing
+main :: IO ()
+main = do
+  -- channel to inject events into main loop
+  chan       <- newBChan 10
+  _          <- advanceGame chan
 
+  initialVty <- buildVty
+  void $ customMain initialVty buildVty (Just chan) app AppState { _gameState = startingState, _iteration = 0, .. }
+ where
+  buildVty = do
+    vty <- V.mkVty V.defaultConfig
+    liftIO $ V.setMode (V.outputIface vty) V.Mouse True
+    return vty
+
+app :: App AppState AppEvent Name
+app = App { appDraw         = drawUI
+          , appChooseCursor = neverShowCursor
+          , appHandleEvent  = handleEvent
+          , appStartEvent   = return
+          , appAttrMap      = const theMap
+          }
+
+advanceGame :: BChan AppEvent -> IO ThreadId
+advanceGame chan = forkIO $ forever $ do
+  writeBChan chan AdvanceGame
+  threadDelay 100000
 
 handleEvent :: AppState -> BrickEvent Name AppEvent -> EventM Name (Next AppState)
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = halt s
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'd') [V.MCtrl])) = halt s
-handleEvent s (AppEvent AdvanceGame) = continue $ s & iteration %~ (+ 1) & gameState %~ execState doGameStep
+handleEvent s (AppEvent AdvanceGame) = continue $ s & iteration +~ 1 & gameState %~ execState doGameStep
 handleEvent s _ = continue s
 
+-- Rendering
 drawGameState :: GameState -> Widget Name
 drawGameState g = str $ unlines [ [ renderPosition (x, y) | x <- [-20 .. 20] ] | y <- [-20 .. 20] ]
  where
@@ -334,7 +334,7 @@ drawGameState g = str $ unlines [ [ renderPosition (x, y) | x <- [-20 .. 20] ] |
   renderType t = case t of
     Nutrition    -> 'N'
     HiveEntrance -> 'H'
-    Pheromone    -> 'o'
+    Pheromone    -> '.'
     Obstacle     -> 'X'
 
 drawUI :: AppState -> [Widget Name]
