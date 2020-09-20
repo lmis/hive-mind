@@ -71,6 +71,7 @@ import           Lens.Micro                     ( Lens'
                                                 , (%~)
                                                 , (.~)
                                                 , (+~)
+                                                , (-~)
                                                 , has
                                                 , each
                                                 , to
