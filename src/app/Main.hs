@@ -4,7 +4,6 @@
 -- TODO: Hiveling interaction?
 module Main
   ( main
-  , randomGenerator
   , closeHivelings
   , closeObjects
   , carriesNutrition
@@ -21,6 +20,11 @@ import           Data.Maybe                     ( fromMaybe )
 import           Control.Monad.IO.Class         ( liftIO )
 import           Control.Monad                  ( forever
                                                 , void
+                                                )
+import           Control.Monad.Trans.State      ( State
+                                                , get
+                                                , put
+                                                , execState
                                                 )
 import           Control.Concurrent             ( ThreadId
                                                 , threadDelay
@@ -72,10 +76,10 @@ import           Lens.Micro.Platform            ( makeLenses )
 data AppEvent = AdvanceGame deriving (Eq, Show, Ord)
 type Position = (Int, Int)
 data Hiveling = Hiveling {
+  _identifier :: !Int,
   _hasNutrition :: !Bool,
   _spreadsPheromones :: !Bool                                 ,
-  _position :: !Position,
-  _randomGenerator :: StdGen
+  _position :: !Position
 } deriving (Show)
 makeLenses ''Hiveling
 
@@ -119,23 +123,30 @@ data AppState = AppState {
 
 makeLenses ''AppState
 
-spawnHiveling :: Position -> GameState -> GameState
-spawnHiveling _position s = s & randomGen .~ left & hivelings %~ (new :)
- where
-  (left, right) = split $ s ^. randomGen
-  new           = Hiveling { _hasNutrition = False, _spreadsPheromones = False, _randomGenerator = right, .. }
+spawnHiveling :: Int -> Position -> GameState -> GameState
+spawnHiveling _identifier _position s = s & hivelings %~ (new :)
+  where new = Hiveling { _hasNutrition = False, _spreadsPheromones = False, .. }
 
 startingState :: GameState
 startingState =
   foldr
-      spawnHiveling
-      GameState { _objects = entrance : boundary ++ nutrition, _hivelings = [], _score = 0, _randomGen = mkStdGen 42 }
-    $   (1, )
-    <$> [1 .. 4]
+      (uncurry spawnHiveling)
+      GameState
+        { _objects   = (GameObject HiveEntrance <$> entrances)
+                       ++ (GameObject Obstacle <$> sides)
+                       ++ (GameObject Obstacle <$> topAndBottom)
+                       ++ (GameObject Nutrition <$> nutrition)
+        , _hivelings = []
+        , _score     = 0
+        , _randomGen = mkStdGen 42
+        }
+    $ zip [0 ..] hivelingPositions
  where
-  entrance  = GameObject HiveEntrance (0, 0)
-  boundary  = GameObject Obstacle <$> ((,) <$> [-20 .. 20] <*> [-20, 20]) ++ ((,) <$> [-20, 20] <*> [-20 .. 20])
-  nutrition = GameObject Nutrition . (9, ) <$> [-10 .. 0]
+  hivelingPositions = (1, ) <$> [1 .. 4]
+  entrances         = [(0, 0)]
+  topAndBottom      = (,) <$> [-20 .. 20] <*> [-20, 20]
+  sides             = (,) <$> [-20, 20] <*> [-20 .. 20]
+  nutrition         = (9, ) <$> [-10 .. 0]
 
 app :: App AppState AppEvent Name
 app = App { appDraw         = drawUI
@@ -173,45 +184,55 @@ relativePosition (ox, oy) (x, y) = (x - ox, y - oy)
 distance :: Position -> Position -> Double
 distance p q = norm $ relativePosition p q
 
-doGameStep :: GameState -> GameState
-doGameStep s = s & hivelings %~ (takeDecisions . map makeInput)
+doGameStep :: State GameState ()
+doGameStep = do
+  s <- get
+  let (s', _, hivelingsWithDecision) = execState forallHivelings (s, s ^. hivelings, [])
+  put $ foldl applyDecision s' hivelingsWithDecision
+  return ()
  where
-  makeInput :: Hiveling -> (Hiveling, HiveMindInput)
-  makeInput h =
-    let (g', g'') = split $ h ^. randomGenerator
-    in  ( h & randomGenerator .~ g'
-        , HiveMindInput { _closeHivelings        = filter (\other -> isClose h $ other ^. position) (s ^. hivelings)
-                        , _closeObjects          = filter (\obj -> isClose h $ obj ^. objectPosition) (s ^. objects)
-                        , _isSpreadingPheromones = h ^. spreadsPheromones
-                        , _carriesNutrition      = h ^. hasNutrition
-                        , _randomInput           = g''
-                        }
+  forallHivelings :: State (GameState, [Hiveling], [(Hiveling, Decision)]) ()
+  forallHivelings = do
+    (s, hs, decisions) <- get
+    case hs of
+      [] -> return ()
+      (h : rest) ->
+        let (s', decision) = applyHiveMind s h in put $ execState forallHivelings (s', rest, (h, decision) : decisions)
+  applyHiveMind :: GameState -> Hiveling -> (GameState, Decision)
+  applyHiveMind s h =
+    let (g', g'') = split $ s ^. randomGen
+    in  ( s & randomGen .~ g'
+        , hiveMind $ HiveMindInput { _closeHivelings = filter (\other -> isClose h $ other ^. position) (s ^. hivelings)
+                                   , _closeObjects = filter (\obj -> isClose h $ obj ^. objectPosition) (s ^. objects)
+                                   , _isSpreadingPheromones = h ^. spreadsPheromones
+                                   , _carriesNutrition = h ^. hasNutrition
+                                   , _randomInput = g''
+                                   }
         )
   isClose :: Hiveling -> Position -> Bool
   isClose h p = distance p (h ^. position) < 2
-  takeDecisions :: [(Hiveling, HiveMindInput)] -> [Hiveling]
-  takeDecisions = map $ \(h, i) -> applyDecision (h, hiveMind i)
-  applyDecision :: (Hiveling, Decision) -> Hiveling
-  applyDecision (h, Move d  ) = h & position %~ tryMove d
-  applyDecision (h, Pickup d) = case objectTypeAt (move d $ h ^. position) of
+  applyDecision :: GameState -> (Hiveling, Decision) -> GameState
+  applyDecision s (h, Move d) =
+    s & hivelings . each . filtered (\x -> (x ^. identifier) == (h ^. identifier)) . position %~ tryMove s d
+  applyDecision s (h, Pickup d) = case objectTypeAt (move d $ h ^. position) s of
     Just Nutrition -> undefined
-    _              -> h
-  applyDecision (h, Drop d) = case objectTypeAt (move d $ h ^. position) of
+    _              -> s
+  applyDecision s (h, Drop d) = case objectTypeAt (move d $ h ^. position) s of
     Just HiveEntrance -> undefined
     Nothing           -> undefined --Check for hivelings, otherwise drop
-    _                 -> h
+    _                 -> s
   -- TODO: Cleanup
-  tryMove :: Direction -> Position -> Position
-  tryMove d p =
+  tryMove :: GameState -> Direction -> Position -> Position
+  tryMove s d p =
     let next = move d p
-    in  case objectTypeAt next of
+    in  case objectTypeAt next s of
           Nothing       -> if has (hivelings . each . position . filtered (== next)) s then p else next
           Just Obstacle -> p
           _             -> next
   partIs :: Eq a => Lens' GameObject a -> a -> GameObject -> Bool
   partIs l x = (^. l . to (== x))
-  objectTypeAt :: Position -> Maybe ObjectType
-  objectTypeAt p = s ^? objects . each . filtered (objectPosition `partIs` p) . objectType
+  objectTypeAt :: Position -> GameState -> Maybe ObjectType
+  objectTypeAt p = (^? objects . each . filtered (objectPosition `partIs` p) . objectType)
 
 hiveMind :: HiveMindInput -> Decision
 hiveMind inp =
@@ -238,7 +259,7 @@ direction2offset d = case d of
 handleEvent :: AppState -> BrickEvent Name AppEvent -> EventM Name (Next AppState)
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = halt s
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'd') [V.MCtrl])) = halt s
-handleEvent s (AppEvent AdvanceGame) = continue $ s & iteration %~ (+ 1) & gameState %~ doGameStep
+handleEvent s (AppEvent AdvanceGame) = continue $ s & iteration %~ (+ 1) & gameState %~ execState doGameStep
 handleEvent s _ = continue s
 
 drawGameState :: GameState -> Widget Name
