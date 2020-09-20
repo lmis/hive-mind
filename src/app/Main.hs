@@ -58,10 +58,10 @@ import           System.Random                  ( StdGen
                                                 , split
                                                 , randomR
                                                 )
-import           Lens.Micro                     ( Lens'
-                                                , Traversal'
+import           Lens.Micro                     ( Traversal'
                                                 , (&)
                                                 , (^?)
+                                                , (^?!)
                                                 , (^.)
                                                 , (^..)
                                                 , (%~)
@@ -130,6 +130,12 @@ withId x = filtered $ (== x) . (^. identifier)
 withType :: ObjectType -> Traversal' GameObject GameObject
 withType t = filtered $ (== t) . (^. objectType)
 
+hivelingAt :: Position -> Traversal' GameState Hiveling
+hivelingAt p = hivelings . each . filtered ((== p) . (^. position))
+
+objectAt :: Position -> Traversal' GameState GameObject
+objectAt p = objects . each . filtered ((== p) . (^. objectPosition))
+
 -- Game init & advancing
 spawnHiveling :: Int -> Position -> GameState -> GameState
 spawnHiveling _identifier _position s = s & hivelings %~ (new :)
@@ -164,7 +170,7 @@ doGameStep = do
   put $ foldl applyDecision s' hivelingsWithDecision
   return ()
  where
-  applyHiveMind :: State (GameState, [Hiveling], [(Hiveling, Decision)]) ()
+  applyHiveMind :: State (GameState, [Hiveling], [(Int, Decision)]) ()
   applyHiveMind = do
     (s, hs, decisions) <- get
     case hs of
@@ -193,36 +199,34 @@ doGameStep = do
               , _carriesNutrition      = h ^. hasNutrition
               , _randomInput           = g''
               }
-        in  put $ execState applyHiveMind (s', rest, (h, decision) : decisions)
+        in  put $ execState applyHiveMind (s', rest, (h ^. identifier, decision) : decisions)
        where
-  applyDecision :: GameState -> (Hiveling, Decision) -> GameState
-  applyDecision s (h, decision) = case decision of
-    Move   d -> s & hivelings . each . withId (h ^. identifier) . position %~ tryMove s d
+  applyDecision :: GameState -> (Int, Decision) -> GameState
+  applyDecision s (i, decision) = case decision of
+    Move d -> case s ^? objectAt (hivelingPos `go` d) . objectType of
+      Nothing       -> if has (hivelingAt $ hivelingPos `go` d) s then s else moveCurrentHiveling d
+      Just Obstacle -> s
+      _             -> moveCurrentHiveling d
     Pickup d -> case targetType d of
-      Just Nutrition -> if h ^. hasNutrition
+      Just Nutrition -> if s ^?! currentHiveling . hasNutrition
         then s
-        else s & currentHasNutrition .~ True & objects %~ filter (\obj -> obj ^. objectPosition /= hivelingPos `go` d)
+        else s & currentHiveling . hasNutrition .~ True & objects %~ filter
+          ((/= hivelingPos `go` d) . (^. objectPosition))
       _ -> s
     Drop d -> case targetType d of
-      Just HiveEntrance -> if h ^. hasNutrition then s & currentHasNutrition .~ False & score +~ 1 else s
-      Nothing           -> s & score -~ 100 -- No food waste!
-      _                 -> s
+      Just HiveEntrance ->
+        if s ^?! currentHiveling . hasNutrition then s & currentHiveling . hasNutrition .~ False & score +~ 1 else s
+      Nothing -> s & score -~ 100 -- No food waste!
+      _       -> s
    where
-    hivelingPos = h ^. position
-    targetType d = objectTypeAt (hivelingPos `go` d) s
-    currentHasNutrition :: Traversal' GameState Bool
-    currentHasNutrition = hivelings . each . withId (h ^. identifier) . hasNutrition
-  tryMove :: GameState -> Direction -> Position -> Position
-  tryMove s d p =
-    let next = p `go` d
-    in  case objectTypeAt next s of
-          Nothing       -> if has (hivelings . each . position . filtered (== next)) s then p else next
-          Just Obstacle -> p
-          _             -> next
-  partIs :: Eq a => Lens' GameObject a -> a -> GameObject -> Bool
-  partIs l x = (^. l . to (== x))
-  objectTypeAt :: Position -> GameState -> Maybe ObjectType
-  objectTypeAt p = (^? objects . each . filtered (objectPosition `partIs` p) . objectType)
+    moveCurrentHiveling :: Direction -> GameState
+    moveCurrentHiveling d = s & currentHiveling . position %~ (`go` d)
+    hivelingPos :: Position
+    hivelingPos = s ^?! currentHiveling . position
+    targetType :: Direction -> Maybe ObjectType
+    targetType d = s ^? objectAt (hivelingPos `go` d) . objectType
+    currentHiveling :: Traversal' GameState Hiveling
+    currentHiveling = hivelings . each . withId i
 
 
 -- Hive mind
