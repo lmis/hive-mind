@@ -71,8 +71,19 @@ import           Lens.Micro                     ( Traversal'
 import           Lens.Micro.Platform            ( makeLenses )
 
 type Position = (Int, Int)
-data Direction = Center | North | NorthEast | East | SouthEast | South | SouthWest | West | NorthWest deriving (Eq, Show, Ord, Enum, Bounded)
-data Decision = Move Direction | Pickup Direction | Drop Direction
+data Direction = Center
+               | North
+               | NorthEast
+               | East
+               | SouthEast
+               | South
+               | SouthWest
+               | West
+               | NorthWest deriving (Eq, Show, Ord, Enum, Bounded)
+
+data Decision = Move Direction
+              | Pickup Direction
+              | Drop Direction deriving (Eq, Show)
 
 data ObjectType = Nutrition
                 | HiveEntrance
@@ -158,13 +169,13 @@ startingState =
   nutrition         = (,) <$> [-10 .. 10] <*> [-10, 10]
 
 
-type Folding s a r = ([a], s, [r]) -> ([a], s, [r])
+type Folding a s r = ([a], s, [r]) -> ([a], s, [r])
 doGameStep :: GameState -> GameState
 doGameStep st =
   let (_, s', hivelingsWithDecision) = applyHiveMind (st ^. hivelings, st, [])
   in  foldl applyDecision s' hivelingsWithDecision
  where
-  applyHiveMind :: Folding GameState Hiveling (Int, Decision)
+  applyHiveMind :: Folding Hiveling GameState (Int, Decision)
   applyHiveMind x@([], _, _) = x
   applyHiveMind (h : hs, s, decisions) =
     let (g', g'') = split $ s ^. randomGen
