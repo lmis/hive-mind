@@ -20,11 +20,6 @@ import           Control.Monad.IO.Class         ( liftIO )
 import           Control.Monad                  ( forever
                                                 , void
                                                 )
-import           Control.Monad.Trans.State      ( State
-                                                , get
-                                                , put
-                                                , execState
-                                                )
 import           Control.Concurrent             ( ThreadId
                                                 , threadDelay
                                                 , forkIO
@@ -163,44 +158,39 @@ startingState =
   nutrition         = (,) <$> [-10 .. 10] <*> [-10, 10]
 
 
-doGameStep :: State GameState ()
-doGameStep = do
-  s <- get
-  let (s', _, hivelingsWithDecision) = execState applyHiveMind (s, s ^. hivelings, [])
-  put $ foldl applyDecision s' hivelingsWithDecision
-  return ()
+type Folding s a r = ([a], s, [r]) -> ([a], s, [r])
+doGameStep :: GameState -> GameState
+doGameStep st =
+  let (_, s', hivelingsWithDecision) = applyHiveMind (st ^. hivelings, st, [])
+  in  foldl applyDecision s' hivelingsWithDecision
  where
-  applyHiveMind :: State (GameState, [Hiveling], [(Int, Decision)]) ()
-  applyHiveMind = do
-    (s, hs, decisions) <- get
-    case hs of
-      [] -> return ()
-      (h : rest) ->
-        let (g', g'') = split $ s ^. randomGen
-            s'        = s & randomGen .~ g'
-            center    = h ^. position
-            isClose p = distance p center < 8
-            decision = hiveMind $ HiveMindInput
-              { _closeHivelings        = s
-                                         ^.. hivelings
-                                         .   each
-                                         .   filtered (isClose . (^. position))
-                                         &   each
-                                         .   position
-                                         %~  relativePosition center
-              , _closeObjects          = s
-                                         ^.. objects
-                                         .   each
-                                         .   filtered (isClose . (^. objectPosition))
-                                         &   each
-                                         .   objectPosition
-                                         %~  relativePosition center
-              , _isSpreadingPheromones = h ^. spreadsPheromones
-              , _carriesNutrition      = h ^. hasNutrition
-              , _randomInput           = g''
-              }
-        in  put $ execState applyHiveMind (s', rest, (h ^. identifier, decision) : decisions)
-       where
+  applyHiveMind :: Folding GameState Hiveling (Int, Decision)
+  applyHiveMind x@([], _, _) = x
+  applyHiveMind (h : hs, s, decisions) =
+    let (g', g'') = split $ s ^. randomGen
+        s'        = s & randomGen .~ g'
+        center    = h ^. position
+        isClose p = distance p center < 8
+        decision = hiveMind $ HiveMindInput
+          { _closeHivelings        = s
+                                     ^.. hivelings
+                                     .   each
+                                     .   filtered (isClose . (^. position))
+                                     &   each
+                                     .   position
+                                     %~  relativePosition center
+          , _closeObjects          = s
+                                     ^.. objects
+                                     .   each
+                                     .   filtered (isClose . (^. objectPosition))
+                                     &   each
+                                     .   objectPosition
+                                     %~  relativePosition center
+          , _isSpreadingPheromones = h ^. spreadsPheromones
+          , _carriesNutrition      = h ^. hasNutrition
+          , _randomInput           = g''
+          }
+    in  applyHiveMind (hs, s', (h ^. identifier, decision) : decisions)
   applyDecision :: GameState -> (Int, Decision) -> GameState
   applyDecision s (i, decision) = case decision of
     Move d -> case s ^? objectAt (hivelingPos `go` d) . objectType of
@@ -315,7 +305,7 @@ advanceGame chan = forkIO $ forever $ do
 handleEvent :: AppState -> BrickEvent Name AppEvent -> EventM Name (Next AppState)
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = halt s
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'd') [V.MCtrl])) = halt s
-handleEvent s (AppEvent AdvanceGame) = continue $ s & iteration +~ 1 & gameState %~ execState doGameStep
+handleEvent s (AppEvent AdvanceGame) = continue $ s & iteration +~ 1 & gameState %~ doGameStep
 handleEvent s _ = continue s
 
 -- Rendering
