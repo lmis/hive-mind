@@ -1,4 +1,7 @@
-{-# LANGUAGE RankNTypes, TupleSections, RecordWildCards, NamedFieldPuns, TemplateHaskell #-}
+{-# LANGUAGE
+   RankNTypes, TupleSections, RecordWildCards,
+   NamedFieldPuns, TemplateHaskell
+#-}
 module Main
   ( main
   -- Unused lenses
@@ -81,9 +84,11 @@ data Direction = Center
                | West
                | NorthWest deriving (Eq, Show, Ord, Enum, Bounded)
 
-data Decision = Move Direction
-              | Pickup Direction
-              | Drop Direction deriving (Eq, Show)
+data DecisionType = Move
+                  | Pickup
+                  | Drop deriving (Eq, Show)
+
+data Decision = Decision DecisionType Direction deriving (Eq, Show)
 
 data ObjectType = Nutrition
                 | HiveEntrance
@@ -91,41 +96,41 @@ data ObjectType = Nutrition
                 | Obstacle deriving (Eq, Show)
 
 data GameObject = GameObject {
-  _objectType :: !ObjectType,
-  _objectPosition :: !Position
+  _objectType :: !ObjectType
+ ,_objectPosition :: !Position
 } deriving (Eq, Show)
 makeLenses ''GameObject
 
 data Hiveling = Hiveling {
-  _identifier :: !Int,
-  _hasNutrition :: !Bool,
-  _spreadsPheromones :: !Bool                                 ,
-  _position :: !Position
+  _identifier :: !Int
+  ,_hasNutrition :: !Bool
+  ,_spreadsPheromones :: !Bool
+  ,_position :: !Position
 } deriving (Eq, Show)
 makeLenses ''Hiveling
 
 data HiveMindInput = HiveMindInput {
-  _closeObjects :: [GameObject],
-  _closeHivelings :: [Hiveling],
-  _carriesNutrition :: !Bool,
-  _isSpreadingPheromones :: !Bool,
-  _randomInput :: StdGen
+  _closeObjects :: [GameObject]
+ ,_closeHivelings :: [Hiveling]
+ ,_carriesNutrition :: !Bool
+ ,_isSpreadingPheromones :: !Bool
+ ,_randomInput :: StdGen
 } deriving (Show)
 makeLenses ''HiveMindInput
 
 data GameState = GameState {
-  _objects :: [GameObject],
-  _hivelings :: [Hiveling],
-  _score :: !Int,
-  _randomGen :: StdGen
+  _objects :: [GameObject]
+ ,_hivelings :: [Hiveling]
+ ,_score :: !Int
+ ,_randomGen :: StdGen
 } deriving (Show)
 makeLenses ''GameState
 
 type Name = ()
 data AppEvent = AdvanceGame deriving (Eq, Show, Ord)
 data AppState = AppState {
-  _gameState :: !GameState,
-  _iteration :: !Int
+  _gameState :: !GameState
+ ,_iteration :: !Int
 } deriving (Show)
 makeLenses ''AppState
 
@@ -205,20 +210,18 @@ doGameStep s =
     in  applyHiveMind (hs, g', (h ^. identifier, decision) : decisions)
 
 applyDecision :: GameState -> (Int, Decision) -> GameState
-applyDecision s (i, decision) = case decision of
-  Move d -> case s ^? objectAt (hivelingPos `go` d) . objectType of
-    Nothing -> if has (hivelingAt $ hivelingPos `go` d) s
-      then s
-      else moveCurrentHiveling d
+applyDecision s (i, Decision t direction) = case t of
+  Move -> case targetType of
+    Nothing -> if has (hivelingAt targetPos) s then s else moveCurrentHiveling
     Just Obstacle -> s
-    _             -> moveCurrentHiveling d
-  Pickup d -> case targetType d of
+    _ -> moveCurrentHiveling
+  Pickup -> case targetType of
     Just Nutrition -> if s ^?! currentHiveling . hasNutrition
       then s
       else s & currentHiveling . hasNutrition .~ True & objects %~ filter
-        ((/= hivelingPos `go` d) . (^. objectPosition))
+        ((/= targetPos) . (^. objectPosition))
     _ -> s
-  Drop d -> case targetType d of
+  Drop -> case targetType of
     Just HiveEntrance -> if s ^?! currentHiveling . hasNutrition
       then s & currentHiveling . hasNutrition .~ False & score +~ 1
       else s
@@ -231,12 +234,14 @@ applyDecision s (i, decision) = case decision of
         .~ False
     _ -> s
  where
-  moveCurrentHiveling :: Direction -> GameState
-  moveCurrentHiveling d = s & currentHiveling . position %~ (`go` d)
   hivelingPos :: Position
   hivelingPos = s ^?! currentHiveling . position
-  targetType :: Direction -> Maybe ObjectType
-  targetType d = s ^? objectAt (hivelingPos `go` d) . objectType
+  targetPos :: Position
+  targetPos = hivelingPos `go` direction
+  targetType :: Maybe ObjectType
+  targetType = s ^? objectAt targetPos . objectType
+  moveCurrentHiveling :: GameState
+  moveCurrentHiveling = s & currentHiveling . position .~ targetPos
   currentHiveling :: Traversal' GameState Hiveling
   currentHiveling = hivelings . each . withId i
 
@@ -247,18 +252,18 @@ hiveMind h
   | h ^. carriesNutrition
   = case h ^? closeObjects . each . withType HiveEntrance of
     Just obj -> case obj ^. objectPosition . to offset2Direction of
-      Just direction -> Drop direction
-      Nothing        -> Move $ obj ^. objectPosition . to closestDirection
+      Just direction -> Decision Drop direction
+      Nothing -> Decision Move $ obj ^. objectPosition . to closestDirection
     Nothing -> randomWalk
   | otherwise
   = case h ^? closeObjects . each . withType Nutrition of
     Just obj -> case obj ^. objectPosition . to offset2Direction of
-      Just direction -> Pickup direction
-      Nothing        -> Move $ obj ^. objectPosition . to closestDirection
+      Just direction -> Decision Pickup direction
+      Nothing -> Decision Move $ obj ^. objectPosition . to closestDirection
     Nothing -> randomWalk
  where
   randomWalk =
-    Move
+    Decision Move
       $ let
           minDirection = minBound :: Direction
           maxDirection = maxBound :: Direction
