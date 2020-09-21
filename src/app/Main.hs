@@ -255,19 +255,27 @@ applyDecision state (i, Decision t direction) = case t of
 -- Hive mind
 hivelingMind :: HivelingMindInput -> Decision
 hivelingMind h
-  | h ^. carriesNutrition = case close HiveEntrance of
+  | h ^. carriesNutrition = case findClose HiveEntrance of
     Just obj -> path (obj ^. objectPosition) `followOrDo` Drop
     Nothing  -> randomWalk
-  | otherwise = case close Nutrition of
+  | otherwise = case findClose Nutrition of
     Just obj -> path (obj ^. objectPosition) `followOrDo` Pickup
     Nothing  -> randomWalk
  where
-  close :: ObjectType -> Maybe GameObject
-  close t = h ^? closeObjects . each . withType t
+  findClose :: ObjectType -> Maybe GameObject
+  findClose t = h ^? closeObjects . each . withType t
   followOrDo :: [Direction] -> DecisionType -> Decision
-  followOrDo []              t = Decision t Center
-  followOrDo [direction    ] t = Decision t direction
-  followOrDo (direction : _) _ = Decision Move direction
+  followOrDo []          t = Decision t Center
+  followOrDo [direction] t = Decision t direction
+  followOrDo (direction : _) _
+    | has
+      (closeHivelings . each . filtered
+        ((== direction2Offset direction) . (^. position))
+      )
+      h
+    = randomWalk
+    | otherwise
+    = Decision Move direction
   randomWalk :: Decision
   randomWalk =
     Decision Move
