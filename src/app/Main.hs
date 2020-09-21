@@ -169,17 +169,16 @@ startingState =
   nutrition         = (,) <$> [-10 .. 10] <*> [-10, 10]
 
 
-type Folding a s r = ([a], s, [r]) -> ([a], s, [r])
+type Iteration a s r = ([a], s, [r]) -> ([a], s, [r])
 doGameStep :: GameState -> GameState
-doGameStep st =
-  let (_, s', hivelingsWithDecision) = applyHiveMind (st ^. hivelings, st, [])
-  in  foldl applyDecision s' hivelingsWithDecision
+doGameStep s =
+  let (_, gen, hivelingsWithDecision) = applyHiveMind (s ^. hivelings, s ^. randomGen, [])
+  in  foldl applyDecision (s & randomGen .~ gen) hivelingsWithDecision
  where
-  applyHiveMind :: Folding Hiveling GameState (Int, Decision)
+  applyHiveMind :: Iteration Hiveling StdGen (Int, Decision)
   applyHiveMind x@([], _, _) = x
-  applyHiveMind (h : hs, s, decisions) =
-    let (g', g'') = split $ s ^. randomGen
-        s'        = s & randomGen .~ g'
+  applyHiveMind (h : hs, g, decisions) =
+    let (g', g'') = split g
         center    = h ^. position
         isClose p = distance p center < 8
         decision = hiveMind $ HiveMindInput
@@ -201,33 +200,34 @@ doGameStep st =
           , _carriesNutrition      = h ^. hasNutrition
           , _randomInput           = g''
           }
-    in  applyHiveMind (hs, s', (h ^. identifier, decision) : decisions)
-  applyDecision :: GameState -> (Int, Decision) -> GameState
-  applyDecision s (i, decision) = case decision of
-    Move d -> case s ^? objectAt (hivelingPos `go` d) . objectType of
-      Nothing       -> if has (hivelingAt $ hivelingPos `go` d) s then s else moveCurrentHiveling d
-      Just Obstacle -> s
-      _             -> moveCurrentHiveling d
-    Pickup d -> case targetType d of
-      Just Nutrition -> if s ^?! currentHiveling . hasNutrition
-        then s
-        else s & currentHiveling . hasNutrition .~ True & objects %~ filter
-          ((/= hivelingPos `go` d) . (^. objectPosition))
-      _ -> s
-    Drop d -> case targetType d of
-      Just HiveEntrance ->
-        if s ^?! currentHiveling . hasNutrition then s & currentHiveling . hasNutrition .~ False & score +~ 1 else s
-      Nothing -> s & score -~ 100 -- No food waste!
-      _       -> s
-   where
-    moveCurrentHiveling :: Direction -> GameState
-    moveCurrentHiveling d = s & currentHiveling . position %~ (`go` d)
-    hivelingPos :: Position
-    hivelingPos = s ^?! currentHiveling . position
-    targetType :: Direction -> Maybe ObjectType
-    targetType d = s ^? objectAt (hivelingPos `go` d) . objectType
-    currentHiveling :: Traversal' GameState Hiveling
-    currentHiveling = hivelings . each . withId i
+    in  applyHiveMind (hs, g', (h ^. identifier, decision) : decisions)
+
+applyDecision :: GameState -> (Int, Decision) -> GameState
+applyDecision s (i, decision) = case decision of
+  Move d -> case s ^? objectAt (hivelingPos `go` d) . objectType of
+    Nothing       -> if has (hivelingAt $ hivelingPos `go` d) s then s else moveCurrentHiveling d
+    Just Obstacle -> s
+    _             -> moveCurrentHiveling d
+  Pickup d -> case targetType d of
+    Just Nutrition -> if s ^?! currentHiveling . hasNutrition
+      then s
+      else s & currentHiveling . hasNutrition .~ True & objects %~ filter
+        ((/= hivelingPos `go` d) . (^. objectPosition))
+    _ -> s
+  Drop d -> case targetType d of
+    Just HiveEntrance ->
+      if s ^?! currentHiveling . hasNutrition then s & currentHiveling . hasNutrition .~ False & score +~ 1 else s
+    Nothing -> s & score -~ 100 -- No food waste!
+    _       -> s
+ where
+  moveCurrentHiveling :: Direction -> GameState
+  moveCurrentHiveling d = s & currentHiveling . position %~ (`go` d)
+  hivelingPos :: Position
+  hivelingPos = s ^?! currentHiveling . position
+  targetType :: Direction -> Maybe ObjectType
+  targetType d = s ^? objectAt (hivelingPos `go` d) . objectType
+  currentHiveling :: Traversal' GameState Hiveling
+  currentHiveling = hivelings . each . withId i
 
 
 -- Hive mind
@@ -246,7 +246,7 @@ hiveMind h
  where
   randomWalk =
     Move
-      $ let minDirection = (minBound :: Direction)
+      $ let minDirection = minBound :: Direction
             maxDirection = maxBound :: Direction
             (r, _)       = randomR (fromEnum minDirection, fromEnum maxDirection) (h ^. randomInput)
         in  toEnum r
