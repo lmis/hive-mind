@@ -145,7 +145,8 @@ objectAt p = objects . each . filtered ((== p) . (^. objectPosition))
 -- Game init & advancing
 spawnHiveling :: Int -> Position -> GameState -> GameState
 spawnHiveling _identifier _position s = s & hivelings %~ (new :)
-  where new = Hiveling { _hasNutrition = False, _spreadsPheromones = False, .. }
+ where
+  new = Hiveling { _hasNutrition = False, _spreadsPheromones = False, .. }
 
 startingState :: GameState
 startingState =
@@ -172,7 +173,8 @@ startingState =
 type Iteration a s r = ([a], s, [r]) -> ([a], s, [r])
 doGameStep :: GameState -> GameState
 doGameStep s =
-  let (_, gen, hivelingsWithDecision) = applyHiveMind (s ^. hivelings, s ^. randomGen, [])
+  let (_, gen, hivelingsWithDecision) =
+          applyHiveMind (s ^. hivelings, s ^. randomGen, [])
   in  foldl applyDecision (s & randomGen .~ gen) hivelingsWithDecision
  where
   applyHiveMind :: Iteration Hiveling StdGen (Int, Decision)
@@ -192,7 +194,7 @@ doGameStep s =
           , _closeObjects          = s
                                      ^.. objects
                                      .   each
-                                     .   filtered (isClose . (^. objectPosition))
+                                     . filtered (isClose . (^. objectPosition))
                                      &   each
                                      .   objectPosition
                                      %~  relativePosition center
@@ -205,7 +207,9 @@ doGameStep s =
 applyDecision :: GameState -> (Int, Decision) -> GameState
 applyDecision s (i, decision) = case decision of
   Move d -> case s ^? objectAt (hivelingPos `go` d) . objectType of
-    Nothing       -> if has (hivelingAt $ hivelingPos `go` d) s then s else moveCurrentHiveling d
+    Nothing -> if has (hivelingAt $ hivelingPos `go` d) s
+      then s
+      else moveCurrentHiveling d
     Just Obstacle -> s
     _             -> moveCurrentHiveling d
   Pickup d -> case targetType d of
@@ -240,12 +244,14 @@ applyDecision s (i, decision) = case decision of
 -- Hive mind
 hiveMind :: HiveMindInput -> Decision
 hiveMind h
-  | h ^. carriesNutrition = case h ^? closeObjects . each . withType HiveEntrance of
+  | h ^. carriesNutrition
+  = case h ^? closeObjects . each . withType HiveEntrance of
     Just obj -> case obj ^. objectPosition . to offset2Direction of
       Just direction -> Drop direction
       Nothing        -> Move $ obj ^. objectPosition . to closestDirection
     Nothing -> randomWalk
-  | otherwise = case h ^? closeObjects . each . withType Nutrition of
+  | otherwise
+  = case h ^? closeObjects . each . withType Nutrition of
     Just obj -> case obj ^. objectPosition . to offset2Direction of
       Just direction -> Pickup direction
       Nothing        -> Move $ obj ^. objectPosition . to closestDirection
@@ -253,10 +259,13 @@ hiveMind h
  where
   randomWalk =
     Move
-      $ let minDirection = minBound :: Direction
-            maxDirection = maxBound :: Direction
-            (r, _)       = randomR (fromEnum minDirection, fromEnum maxDirection) (h ^. randomInput)
-        in  toEnum r
+      $ let
+          minDirection = minBound :: Direction
+          maxDirection = maxBound :: Direction
+          (r, _)       = randomR (fromEnum minDirection, fromEnum maxDirection)
+                                 (h ^. randomInput)
+        in
+          toEnum r
 
 -- Direction
 norm :: Position -> Double
@@ -300,11 +309,12 @@ main = do
   _          <- advanceGame chan
 
   initialVty <- buildVty
-  void $ customMain initialVty
-                    buildVty
-                    (Just chan)
-                    app
-                    AppState { _gameState = startingState, _iteration = 0, .. }
+  void $ customMain
+    initialVty
+    buildVty
+    (Just chan)
+    app
+    AppState { _gameState = startingState, _iteration = 0, .. }
  where
   buildVty = do
     vty <- V.mkVty V.defaultConfig
@@ -324,15 +334,18 @@ advanceGame chan = forkIO $ forever $ do
   writeBChan chan AdvanceGame
   threadDelay 100000
 
-handleEvent :: AppState -> BrickEvent Name AppEvent -> EventM Name (Next AppState)
+handleEvent
+  :: AppState -> BrickEvent Name AppEvent -> EventM Name (Next AppState)
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = halt s
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'd') [V.MCtrl])) = halt s
-handleEvent s (AppEvent AdvanceGame) = continue $ s & iteration +~ 1 & gameState %~ doGameStep
+handleEvent s (AppEvent AdvanceGame) =
+  continue $ s & iteration +~ 1 & gameState %~ doGameStep
 handleEvent s _ = continue s
 
 -- Rendering
 drawGameState :: GameState -> Widget Name
-drawGameState g = str $ unlines [ [ renderPosition (x, y) | x <- [-20 .. 20] ] | y <- [-20 .. 20] ]
+drawGameState g = str
+  $ unlines [ [ renderPosition (x, y) | x <- [-20 .. 20] ] | y <- [-20 .. 20] ]
  where
   pointsOfInterest :: Map Position Char
   pointsOfInterest =
@@ -360,7 +373,9 @@ drawUI s =
   [ C.hCenter
       .   labeledVBox "Hive Mind"
       $   C.hCenter
-      <$> [ labeledVBox "Score" [padLeftRight 10 . str . show $ s ^. gameState . score]
+      <$> [ labeledVBox
+            "Score"
+            [padLeftRight 10 . str . show $ s ^. gameState . score]
           , drawGameState $ s ^. gameState
           ]
   ]
@@ -373,4 +388,6 @@ theMap = attrMap V.defAttr []
 
 labeledVBox :: String -> [Widget a] -> Widget a
 labeledVBox label content =
-  withBorderStyle BS.unicodeBold $ B.borderWithLabel (padLeftRight 1 $ str label) $ vBox content
+  withBorderStyle BS.unicodeBold
+    $ B.borderWithLabel (padLeftRight 1 $ str label)
+    $ vBox content

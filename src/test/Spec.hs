@@ -6,5 +6,6 @@ import qualified ExampleSpec                    ( check )
 
 check :: IO Bool
 check = do
-  putStrLn "---------------------------------- EXAMPLE ----------------------------------"
+  putStrLn
+    "---------------------------------- EXAMPLE ----------------------------------"
   ExampleSpec.check
