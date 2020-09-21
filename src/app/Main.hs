@@ -215,10 +215,17 @@ applyDecision s (i, decision) = case decision of
         ((/= hivelingPos `go` d) . (^. objectPosition))
     _ -> s
   Drop d -> case targetType d of
-    Just HiveEntrance ->
-      if s ^?! currentHiveling . hasNutrition then s & currentHiveling . hasNutrition .~ False & score +~ 1 else s
-    Nothing -> s & score -~ 100 -- No food waste!
-    _       -> s
+    Just HiveEntrance -> if s ^?! currentHiveling . hasNutrition
+      then s & currentHiveling . hasNutrition .~ False & score +~ 1
+      else s
+    Nothing ->
+      s
+        &  score
+        -~ 100 -- No food waste!
+        &  currentHiveling
+        .  hasNutrition
+        .~ False
+    _ -> s
  where
   moveCurrentHiveling :: Direction -> GameState
   moveCurrentHiveling d = s & currentHiveling . position %~ (`go` d)
@@ -293,7 +300,11 @@ main = do
   _          <- advanceGame chan
 
   initialVty <- buildVty
-  void $ customMain initialVty buildVty (Just chan) app AppState { _gameState = startingState, _iteration = 0, .. }
+  void $ customMain initialVty
+                    buildVty
+                    (Just chan)
+                    app
+                    AppState { _gameState = startingState, _iteration = 0, .. }
  where
   buildVty = do
     vty <- V.mkVty V.defaultConfig
@@ -326,7 +337,9 @@ drawGameState g = str $ unlines [ [ renderPosition (x, y) | x <- [-20 .. 20] ] |
   pointsOfInterest :: Map Position Char
   pointsOfInterest =
     fromListWith const
-      $  (g ^.. objects . each . to (\obj -> (obj ^. objectPosition, obj ^. objectType . to renderType)))
+      $  (g ^.. objects . each . to
+           (\obj -> (obj ^. objectPosition, obj ^. objectType . to renderType))
+         )
       ++ (g ^.. hivelings . each . to (\h -> (h ^. position, renderHiveling h)))
   renderPosition :: Position -> Char
   renderPosition p = fromMaybe ' ' (pointsOfInterest !? p)
@@ -347,7 +360,9 @@ drawUI s =
   [ C.hCenter
       .   labeledVBox "Hive Mind"
       $   C.hCenter
-      <$> [labeledVBox "Score" [padLeftRight 10 . str . show $ s ^. gameState . score], drawGameState $ s ^. gameState]
+      <$> [ labeledVBox "Score" [padLeftRight 10 . str . show $ s ^. gameState . score]
+          , drawGameState $ s ^. gameState
+          ]
   ]
 
 theMap :: AttrMap
