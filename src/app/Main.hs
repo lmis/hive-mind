@@ -109,14 +109,14 @@ data Hiveling = Hiveling {
 } deriving (Eq, Show)
 makeLenses ''Hiveling
 
-data HiveMindInput = HiveMindInput {
+data HivelingMindInput = HivelingMindInput {
   _closeObjects :: [GameObject]
  ,_closeHivelings :: [Hiveling]
  ,_carriesNutrition :: !Bool
  ,_isSpreadingPheromones :: !Bool
  ,_randomInput :: StdGen
 } deriving (Show)
-makeLenses ''HiveMindInput
+makeLenses ''HivelingMindInput
 
 data GameState = GameState {
   _objects :: [GameObject]
@@ -175,20 +175,20 @@ startingState =
   nutrition         = (,) <$> [-10 .. 10] <*> [-10, 10]
 
 
-type Iteration a s r = ([a], s, [r]) -> ([a], s, [r])
+type TakeDecisionsContext = ([Hiveling], StdGen, [(Int, Decision)])
 doGameStep :: GameState -> GameState
 doGameStep s =
   let (_, gen, hivelingsWithDecision) =
-          applyHiveMind (s ^. hivelings, s ^. randomGen, [])
+          takeDecisions (s ^. hivelings, s ^. randomGen, [])
   in  foldl applyDecision (s & randomGen .~ gen) hivelingsWithDecision
  where
-  applyHiveMind :: Iteration Hiveling StdGen (Int, Decision)
-  applyHiveMind x@([], _, _) = x
-  applyHiveMind (h : hs, g, decisions) =
+  takeDecisions :: TakeDecisionsContext -> TakeDecisionsContext
+  takeDecisions x@([], _, _) = x
+  takeDecisions (h : hs, g, decisions) =
     let (g', g'') = split g
         center    = h ^. position
         isClose p = distance p center < 8
-        decision = hiveMind $ HiveMindInput
+        decision = hivelingMind $ HivelingMindInput
           { _closeHivelings        = s
                                      ^.. hivelings
                                      .   each
@@ -196,6 +196,9 @@ doGameStep s =
                                      &   each
                                      .   position
                                      %~  relativePosition center
+                                     &   each
+                                     .   identifier
+                                     .~  -1
           , _closeObjects          = s
                                      ^.. objects
                                      .   each
@@ -207,61 +210,65 @@ doGameStep s =
           , _carriesNutrition      = h ^. hasNutrition
           , _randomInput           = g''
           }
-    in  applyHiveMind (hs, g', (h ^. identifier, decision) : decisions)
+    in  takeDecisions (hs, g', (h ^. identifier, decision) : decisions)
 
 applyDecision :: GameState -> (Int, Decision) -> GameState
-applyDecision s (i, Decision t direction) = case t of
-  Move -> case targetType of
-    Nothing -> if has (hivelingAt targetPos) s then s else moveCurrentHiveling
-    Just Obstacle -> s
-    _ -> moveCurrentHiveling
-  Pickup -> case targetType of
-    Just Nutrition -> if s ^?! currentHiveling . hasNutrition
-      then s
-      else s & currentHiveling . hasNutrition .~ True & objects %~ filter
+applyDecision state (i, Decision t direction) = case t of
+  Move -> case targetObject of
+    Just Obstacle -> state
+    _ | has (hivelingAt targetPos) state -> state
+      | otherwise -> state & currentHiveling . position .~ targetPos
+  Pickup -> case targetObject of
+    Just Nutrition
+      | state ^?! currentHiveling . hasNutrition
+      -> state
+      | otherwise
+      -> state & currentHiveling . hasNutrition .~ True & objects %~ filter
         ((/= targetPos) . (^. objectPosition))
-    _ -> s
-  Drop -> case targetType of
-    Just HiveEntrance -> if s ^?! currentHiveling . hasNutrition
-      then s & currentHiveling . hasNutrition .~ False & score +~ 1
-      else s
+    Just _  -> state
+    Nothing -> state
+  Drop -> case targetObject of
+    Just HiveEntrance
+      | state ^?! currentHiveling . hasNutrition
+      -> state & currentHiveling . hasNutrition .~ False & score +~ 1
+      | otherwise
+      -> state
+    Just _ -> state
     Nothing ->
-      s
+      state
         &  score
         -~ 100 -- No food waste!
         &  currentHiveling
         .  hasNutrition
         .~ False
-    _ -> s
  where
-  hivelingPos :: Position
-  hivelingPos = s ^?! currentHiveling . position
-  targetPos :: Position
-  targetPos = hivelingPos `go` direction
-  targetType :: Maybe ObjectType
-  targetType = s ^? objectAt targetPos . objectType
-  moveCurrentHiveling :: GameState
-  moveCurrentHiveling = s & currentHiveling . position .~ targetPos
   currentHiveling :: Traversal' GameState Hiveling
   currentHiveling = hivelings . each . withId i
+  hivelingPos :: Position
+  hivelingPos = state ^?! currentHiveling . position
+  targetPos :: Position
+  targetPos = hivelingPos `go` direction
+  targetObject :: Maybe ObjectType
+  targetObject = state ^? objectAt targetPos . objectType
 
 
 -- Hive mind
-hiveMind :: HiveMindInput -> Decision
-hiveMind h
-  | h ^. carriesNutrition
-  = case h ^? closeObjects . each . withType HiveEntrance of
-    Just obj -> case obj ^. objectPosition . to offset2Direction of
-      Just direction -> Decision Drop direction
-      Nothing -> Decision Move $ obj ^. objectPosition . to closestDirection
-    Nothing -> randomWalk
-  | otherwise
-  = case h ^? closeObjects . each . withType Nutrition of
-    Just obj -> case obj ^. objectPosition . to offset2Direction of
-      Just direction -> Decision Pickup direction
-      Nothing -> Decision Move $ obj ^. objectPosition . to closestDirection
-    Nothing -> randomWalk
+hivelingMind :: HivelingMindInput -> Decision
+hivelingMind h
+  | h ^. carriesNutrition = case close HiveEntrance of
+    Just obj -> path (obj ^. objectPosition) `followOrDo` Drop
+    Nothing  -> randomWalk
+  | otherwise = case close Nutrition of
+    Just obj -> path (obj ^. objectPosition) `followOrDo` Pickup
+    Nothing  -> randomWalk
  where
+  close :: ObjectType -> Maybe GameObject
+  close t = h ^? closeObjects . each . withType t
+  followOrDo :: [Direction] -> DecisionType -> Decision
+  followOrDo []              t = Decision t Center
+  followOrDo [direction    ] t = Decision t direction
+  followOrDo (direction : _) _ = Decision Move direction
+  randomWalk :: Decision
   randomWalk =
     Decision Move
       $ let
@@ -305,6 +312,15 @@ closestDirection (x, y) = fromJust $ offset2Direction (limit x, limit y)
  where
   limit :: Int -> Int
   limit n = min 1 $ max (-1) n
+
+path :: Position -> [Direction]
+path p@(x, y) = case offset2Direction p of
+  Just d -> [d]
+  _ ->
+    let dir      = closestDirection p
+        (x', y') = direction2Offset dir
+        remain   = (x - x', y - y')
+    in  dir : path remain
 
 -- App plumbing
 main :: IO ()
