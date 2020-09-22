@@ -19,6 +19,11 @@ import           Data.Map.Strict                ( Map
 import           Data.Maybe                     ( fromMaybe
                                                 , fromJust
                                                 )
+import           Control.Monad.Trans.State      ( State
+                                                , get
+                                                , put
+                                                , runState
+                                                )
 import           Control.Monad.IO.Class         ( liftIO )
 import           Control.Monad                  ( forever
                                                 , void
@@ -175,16 +180,15 @@ startingState =
   nutrition         = (,) <$> [-10 .. 10] <*> [-10, 10]
 
 
-type TakeDecisionsContext = ([Hiveling], StdGen, [(Int, Decision)])
 doGameStep :: GameState -> GameState
 doGameStep s =
-  let (_, gen, hivelingsWithDecision) =
-          takeDecisions (s ^. hivelings, s ^. randomGen, [])
+  let (hivelingsWithDecision, gen) =
+          runState (mapM takeDecision $ s ^. hivelings) (s ^. randomGen)
   in  foldl applyDecision (s & randomGen .~ gen) hivelingsWithDecision
  where
-  takeDecisions :: TakeDecisionsContext -> TakeDecisionsContext
-  takeDecisions x@([], _, _) = x
-  takeDecisions (h : hs, g, decisions) =
+  takeDecision :: Hiveling -> State StdGen (Int, Decision)
+  takeDecision h = do
+    g <- get
     let (g', g'') = split g
         center    = h ^. position
         isClose p = distance p center < 8
@@ -210,7 +214,8 @@ doGameStep s =
           , _carriesNutrition      = h ^. hasNutrition
           , _randomInput           = g''
           }
-    in  takeDecisions (hs, g', (h ^. identifier, decision) : decisions)
+    put g'
+    return (h ^. identifier, decision)
 
 applyDecision :: GameState -> (Int, Decision) -> GameState
 applyDecision state (i, Decision t direction) = case t of
