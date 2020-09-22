@@ -219,7 +219,7 @@ doGameStep s =
 
 applyDecision :: GameState -> (Int, Decision) -> GameState
 applyDecision state (i, Decision t direction) = case t of
-  Move -> case targetObject of
+  Move   -> case targetObject of
     Just Obstacle -> state
     _ | has (hivelingAt targetPos) state -> state
       | otherwise -> state & currentHiveling . position .~ targetPos
@@ -228,11 +228,15 @@ applyDecision state (i, Decision t direction) = case t of
       | state ^?! currentHiveling . hasNutrition
       -> state
       | otherwise
-      -> state & currentHiveling . hasNutrition .~ True & objects %~ filter
-        ((/= targetPos) . (^. objectPosition))
+      -> state
+        &  currentHiveling
+        .  hasNutrition
+        .~ True
+        &  objects
+        %~ filter ((/= targetPos) . (^. objectPosition))
     Just _  -> state
     Nothing -> state
-  Drop -> case targetObject of
+  Drop   -> case targetObject of
     Just HiveEntrance
       | state ^?! currentHiveling . hasNutrition
       -> state & currentHiveling . hasNutrition .~ False & score +~ 1
@@ -274,8 +278,9 @@ hivelingMind h
   followOrDo [direction] t = Decision t direction
   followOrDo (direction : _) _
     | has
-      (closeHivelings . each . filtered
-        ((== direction2Offset direction) . (^. position))
+      ( closeHivelings
+      . each
+      . filtered ((== direction2Offset direction) . (^. position))
       )
       h
     = randomWalk
@@ -284,13 +289,11 @@ hivelingMind h
   randomWalk :: Decision
   randomWalk =
     Decision Move
-      $ let
-          minDirection = minBound :: Direction
-          maxDirection = maxBound :: Direction
-          (r, _)       = randomR (fromEnum minDirection, fromEnum maxDirection)
-                                 (h ^. randomInput)
-        in
-          toEnum r
+      $ let minDirection = minBound :: Direction
+            maxDirection = maxBound :: Direction
+            (r, _) = randomR (fromEnum minDirection, fromEnum maxDirection)
+                             (h ^. randomInput)
+        in  toEnum r
 
 -- Direction
 norm :: Position -> Double
@@ -369,8 +372,9 @@ advanceGame chan = forkIO $ forever $ do
   writeBChan chan AdvanceGame
   threadDelay $ 100 * 1000
 
-handleEvent
-  :: AppState -> BrickEvent Name AppEvent -> EventM Name (Next AppState)
+handleEvent :: AppState
+            -> BrickEvent Name AppEvent
+            -> EventM Name (Next AppState)
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = halt s
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'd') [V.MCtrl])) = halt s
 handleEvent s (AppEvent AdvanceGame) =
@@ -387,8 +391,13 @@ drawGameState g = str
   pointsOfInterest :: Map Position Char
   pointsOfInterest =
     fromListWith const
-      $  (g ^.. objects . each . to
-           (\obj -> (obj ^. objectPosition, obj ^. objectType . to renderType))
+      $  (   g
+         ^.. objects
+         .   each
+         .   to
+               (\obj ->
+                 (obj ^. objectPosition, obj ^. objectType . to renderType)
+               )
          )
       ++ (g ^.. hivelings . each . to (\h -> (h ^. position, renderHiveling h)))
   renderHiveling :: Hiveling -> Char
