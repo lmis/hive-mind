@@ -202,7 +202,7 @@ doGameStep s =
                                      %~  relativePosition center
                                      &   each
                                      .   identifier
-                                     .~  -1
+                                     .~  -1 -- Hivelings don't know about ids
           , _closeObjects          = s
                                      ^.. objects
                                      .   each
@@ -352,6 +352,7 @@ main = do
  where
   buildVty = do
     vty <- V.mkVty V.defaultConfig
+    -- Grab mouse
     liftIO $ V.setMode (V.outputIface vty) V.Mouse True
     return vty
 
@@ -366,7 +367,7 @@ app = App { appDraw         = drawUI
 advanceGame :: BChan AppEvent -> IO ThreadId
 advanceGame chan = forkIO $ forever $ do
   writeBChan chan AdvanceGame
-  threadDelay 100000
+  threadDelay $ 100 * 1000
 
 handleEvent
   :: AppState -> BrickEvent Name AppEvent -> EventM Name (Next AppState)
@@ -381,6 +382,8 @@ drawGameState :: GameState -> Widget Name
 drawGameState g = str
   $ unlines [ [ renderPosition (x, y) | x <- [-20 .. 20] ] | y <- [-20 .. 20] ]
  where
+  renderPosition :: Position -> Char
+  renderPosition p = fromMaybe ' ' (pointsOfInterest !? p)
   pointsOfInterest :: Map Position Char
   pointsOfInterest =
     fromListWith const
@@ -388,8 +391,6 @@ drawGameState g = str
            (\obj -> (obj ^. objectPosition, obj ^. objectType . to renderType))
          )
       ++ (g ^.. hivelings . each . to (\h -> (h ^. position, renderHiveling h)))
-  renderPosition :: Position -> Char
-  renderPosition p = fromMaybe ' ' (pointsOfInterest !? p)
   renderHiveling :: Hiveling -> Char
   renderHiveling h | h ^. hasNutrition && h ^. spreadsPheromones = 'û'
                    | h ^. hasNutrition      = 'î'
@@ -416,9 +417,6 @@ drawUI s =
 
 theMap :: AttrMap
 theMap = attrMap V.defAttr []
-
--- button :: String -> a -> Widget a
--- button label name = clickable name $ withBorderStyle BS.unicode $ B.border $ padLeftRight 1 $ str label
 
 labeledVBox :: String -> [Widget a] -> Widget a
 labeledVBox label content =
