@@ -5,8 +5,6 @@
 module Main
   ( main
   -- Unused lenses
-  , closeHivelings
-  , isSpreadingPheromones
   )
 where
 
@@ -14,7 +12,7 @@ import           GHC.Float                      ( int2Double )
 import           Data.List                      ( find )
 import           Data.Map.Strict                ( Map
                                                 , (!?)
-                                                , fromListWith
+                                                , fromList
                                                 )
 import           Data.Maybe                     ( fromMaybe
                                                 , fromJust
@@ -61,10 +59,10 @@ import           System.Random                  ( StdGen
                                                 , split
                                                 , randomR
                                                 )
-import           Lens.Micro                     ( Traversal'
+import           Lens.Micro                     ( Lens'
+                                                , Traversal'
                                                 , (&)
                                                 , (^?)
-                                                , (^?!)
                                                 , (^.)
                                                 , (^..)
                                                 , (%~)
@@ -74,7 +72,9 @@ import           Lens.Micro                     ( Traversal'
                                                 , has
                                                 , each
                                                 , to
+                                                , lens
                                                 , filtered
+                                                , _Just
                                                 )
 import           Lens.Micro.Platform            ( makeLenses )
 
@@ -95,37 +95,40 @@ data DecisionType = Move
 
 data Decision = Decision DecisionType Direction deriving (Eq, Show)
 
-data ObjectType = Nutrition
-                | HiveEntrance
-                | Pheromone
-                | Obstacle deriving (Eq, Show)
-
-data GameObject = GameObject {
-  _objectType :: !ObjectType
- ,_objectPosition :: !Position
+data HivelingProps = HivelingProps {
+ _hasNutrition :: !Bool
+ ,_spreadsPheromones :: !Bool
 } deriving (Eq, Show)
-makeLenses ''GameObject
+makeLenses ''HivelingProps
 
-data Hiveling = Hiveling {
+data EntityBase = EntityBase {
   _identifier :: !Int
-  ,_hasNutrition :: !Bool
-  ,_spreadsPheromones :: !Bool
-  ,_position :: !Position
+ ,_position :: !Position
 } deriving (Eq, Show)
-makeLenses ''Hiveling
+makeLenses ''EntityBase
+
+data EntityDetails = Hiveling HivelingProps
+                   | Nutrition
+                   | HiveEntrance
+                   | Pheromone
+                   | Obstacle deriving (Eq, Show)
+
+data Entity = Entity {
+ _base :: !EntityBase
+ ,_details :: !EntityDetails
+} deriving (Eq, Show)
+makeLenses ''Entity
 
 data HivelingMindInput = HivelingMindInput {
-  _closeObjects :: [GameObject]
- ,_closeHivelings :: [Hiveling]
- ,_carriesNutrition :: !Bool
- ,_isSpreadingPheromones :: !Bool
+  _closeEntities :: [Entity]
+ ,_currentHiveling :: HivelingProps
  ,_randomInput :: StdGen
 } deriving (Show)
 makeLenses ''HivelingMindInput
 
 data GameState = GameState {
-  _objects :: [GameObject]
- ,_hivelings :: [Hiveling]
+  _entities :: [Entity]
+ ,_nextId :: Int
  ,_score :: !Int
  ,_randomGen :: StdGen
 } deriving (Show)
@@ -139,148 +142,160 @@ data AppState = AppState {
 } deriving (Show)
 makeLenses ''AppState
 
--- Traversals
-withId :: Int -> Traversal' Hiveling Hiveling
-withId x = filtered $ (== x) . (^. identifier)
+-- Traversals & Utils
+withId :: Int -> Traversal' Entity Entity
+withId x = filtered $ (== x) . (^. base . identifier)
 
-withType :: ObjectType -> Traversal' GameObject GameObject
-withType t = filtered $ (== t) . (^. objectType)
+asHiveling :: Lens' Entity (Maybe (EntityBase, HivelingProps))
+asHiveling = lens getter setter
+ where
+  getter :: Entity -> Maybe (EntityBase, HivelingProps)
+  getter (Entity b (Hiveling d)) = Just (b, d)
+  getter _                       = Nothing
+  setter :: Entity -> Maybe (EntityBase, HivelingProps) -> Entity
+  setter (Entity _ (Hiveling _)) (Just (b, d)) = Entity b (Hiveling d)
+  setter e                       _             = e
 
-hivelingAt :: Position -> Traversal' GameState Hiveling
-hivelingAt p = hivelings . each . filtered ((== p) . (^. position))
+hivelingProps :: Lens' Entity (Maybe HivelingProps)
+hivelingProps = lens getter setter
+ where
+  getter :: Entity -> Maybe HivelingProps
+  getter (Entity _ (Hiveling d)) = Just d
+  getter _                       = Nothing
+  setter :: Entity -> Maybe HivelingProps -> Entity
+  setter (Entity b (Hiveling _)) (Just d) = Entity b (Hiveling d)
+  setter e                       _        = e
 
-objectAt :: Position -> Traversal' GameState GameObject
-objectAt p = objects . each . filtered ((== p) . (^. objectPosition))
+entityAt :: Position -> Traversal' GameState Entity
+entityAt p = entities . each . filtered ((== p) . (^. base . position))
 
 -- Game init & advancing
-spawnHiveling :: Int -> Position -> GameState -> GameState
-spawnHiveling _identifier _position s = s & hivelings %~ (new :)
- where
-  new = Hiveling { _hasNutrition = False, _spreadsPheromones = False, .. }
+addEntity :: EntityDetails -> Position -> GameState -> GameState
+addEntity d p state = state & nextId +~ 1 & entities %~ (new :)
+  where new = Entity (EntityBase (state ^. nextId) p) d
 
 startingState :: GameState
 startingState =
   foldr
-      (uncurry spawnHiveling)
-      GameState
-        { _objects   = (GameObject HiveEntrance <$> entrances)
-                       ++ (GameObject Obstacle <$> sides)
-                       ++ (GameObject Obstacle <$> topAndBottom)
-                       ++ (GameObject Nutrition <$> nutrition)
-        , _hivelings = []
-        , _score     = 0
-        , _randomGen = mkStdGen 42
-        }
-    $ zip [0 ..] hivelingPositions
+      (uncurry addEntity)
+      GameState { _entities  = []
+                , _nextId    = 0
+                , _score     = 0
+                , _randomGen = mkStdGen 42
+                }
+    $  ((Hiveling $ HivelingProps False False, ) <$> hivelings)
+    ++ ((HiveEntrance, ) <$> entrances)
+    ++ ((Obstacle, ) <$> topAndBottom)
+    ++ ((Obstacle, ) <$> sides)
+    ++ ((Nutrition, ) <$> nutrition)
  where
-  hivelingPositions = (1, ) <$> [1 .. 4]
-  entrances         = (,) <$> [-15, 0, 15] <*> [-15, 0, 15]
-  topAndBottom      = (,) <$> [-20 .. 20] <*> [-20, 20]
-  sides             = (,) <$> [-20, 20] <*> [-20 .. 20]
-  nutrition         = (,) <$> [-10 .. 10] <*> [-10, 10]
-
+  hivelings    = (1, ) <$> [1 .. 4]
+  entrances    = (,) <$> [-15, 0, 15] <*> [-15, 0, 15]
+  topAndBottom = (,) <$> [-20 .. 20] <*> [-20, 20]
+  sides        = (,) <$> [-20, 20] <*> [-20 .. 20]
+  nutrition    = (,) <$> [-10 .. 10] <*> [-10, 10]
 
 doGameStep :: GameState -> GameState
 doGameStep s =
-  let (hivelingsWithDecision, gen) =
-          runState (mapM takeDecision $ s ^. hivelings) (s ^. randomGen)
-  in  foldl applyDecision (s & randomGen .~ gen) hivelingsWithDecision
+  let (hivelingWithDecision, gen) =
+          runState
+        -- TODO: Shuffle
+                   (mapM takeDecision hivelings) (s ^. randomGen)
+  in  foldl applyDecision (s & randomGen .~ gen) hivelingWithDecision
  where
-  takeDecision :: Hiveling -> State StdGen (Int, Decision)
-  takeDecision h = do
+  hivelings :: [(EntityBase, HivelingProps)]
+  hivelings = s ^.. entities . each . asHiveling . _Just
+  takeDecision :: (EntityBase, HivelingProps)
+               -> State StdGen (EntityBase, HivelingProps, Decision)
+  takeDecision (b, h) = do
     g <- get
     let (g', g'') = split g
-        center    = h ^. position
+        center    = b ^. position
         isClose p = distance p center < 8
         decision = hivelingMind $ HivelingMindInput
-          { _closeHivelings        = s
-                                     ^.. hivelings
-                                     .   each
-                                     .   filtered (isClose . (^. position))
-                                     &   each
-                                     .   position
-                                     %~  relativePosition center
-                                     &   each
-                                     .   identifier
-                                     .~  -1 -- Hivelings don't know about ids
-          , _closeObjects          = s
-                                     ^.. objects
-                                     .   each
-                                     . filtered (isClose . (^. objectPosition))
-                                     &   each
-                                     .   objectPosition
-                                     %~  relativePosition center
-          , _isSpreadingPheromones = h ^. spreadsPheromones
-          , _carriesNutrition      = h ^. hasNutrition
-          , _randomInput           = g''
+          { _closeEntities   = s
+                               ^.. entities
+                               .   each
+                               .   filtered (isClose . (^. base . position))
+                               &   each
+                               %~  forHivelingMind center
+          , _currentHiveling = h
+          , _randomInput     = g''
           }
     put g'
-    return (h ^. identifier, decision)
+    return (b, h, decision)
+  forHivelingMind :: Position -> Entity -> Entity
+  forHivelingMind center e =
+    e
+      &  base
+      .  position
+      %~ relativePosition center
+      &
+      -- Hivelings don't know about ids
+         base
+      .  identifier
+      .~ -1
 
-applyDecision :: GameState -> (Int, Decision) -> GameState
-applyDecision state (i, Decision t direction) = case t of
-  Move   -> case targetObject of
-    Just Obstacle -> state
-    _ | has (hivelingAt targetPos) state -> state
-      | otherwise -> state & currentHiveling . position .~ targetPos
-  Pickup -> case targetObject of
-    Just Nutrition
-      | state ^?! currentHiveling . hasNutrition
-      -> state
-      | otherwise
-      -> state
-        &  currentHiveling
+applyDecision :: GameState -> (EntityBase, HivelingProps, Decision) -> GameState
+applyDecision state (b, h, Decision t direction) = case t of
+  Move   -> case entityAtTarget of
+    Just (Entity _ Obstacle) -> state & score -~ 1
+    Just _ -> state
+    Nothing -> state & currentEntity . base . position .~ targetPos
+  Pickup -> case entityAtTarget of
+    Just (Entity _ Nutrition) -> if h ^. hasNutrition
+      then state
+      else
+        state
+        &  currentHivelingProps
         .  hasNutrition
         .~ True
-        &  objects
-        %~ filter ((/= targetPos) . (^. objectPosition))
-    Just _  -> state
-    Nothing -> state
-  Drop   -> case targetObject of
-    Just HiveEntrance
-      | state ^?! currentHiveling . hasNutrition
-      -> state & currentHiveling . hasNutrition .~ False & score +~ 1
-      | otherwise
-      -> state
-    Just _ -> state
+        &  entities
+        %~ filter ((/= entityAtTarget) . Just)
+    _                         -> state
+  Drop   -> case entityAtTarget of
+    Just (Entity _ HiveEntrance) -> if h ^. hasNutrition
+      then state & currentHivelingProps . hasNutrition .~ False & score +~ 10
+      else state
+    Just _                       -> state
     Nothing ->
       state
         &  score
         -~ 100 -- No food waste!
-        &  currentHiveling
+        &  currentHivelingProps
         .  hasNutrition
         .~ False
  where
-  currentHiveling :: Traversal' GameState Hiveling
-  currentHiveling = hivelings . each . withId i
-  hivelingPos :: Position
-  hivelingPos = state ^?! currentHiveling . position
   targetPos :: Position
-  targetPos = hivelingPos `go` direction
-  targetObject :: Maybe ObjectType
-  targetObject = state ^? objectAt targetPos . objectType
+  targetPos = (b ^. position) `go` direction
+  entityAtTarget :: Maybe Entity
+  entityAtTarget = state ^? entityAt targetPos
+  currentEntity :: Traversal' GameState Entity
+  currentEntity = entities . each . withId (b ^. identifier)
+  currentHivelingProps :: Traversal' GameState HivelingProps
+  currentHivelingProps = currentEntity . hivelingProps . _Just
 
 
 -- Hive mind
 hivelingMind :: HivelingMindInput -> Decision
 hivelingMind h
-  | h ^. carriesNutrition = case findClose HiveEntrance of
-    Just obj -> path (obj ^. objectPosition) `followOrDo` Drop
+  | h ^. currentHiveling . hasNutrition = case findClose (== HiveEntrance) of
+    Just obj -> path (obj ^. base . position) `followOrDo` Drop
     Nothing  -> randomWalk
-  | otherwise = case findClose Nutrition of
-    Just obj -> path (obj ^. objectPosition) `followOrDo` Pickup
+  | otherwise = case findClose (== Nutrition) of
+    Just obj -> path (obj ^. base . position) `followOrDo` Pickup
     Nothing  -> randomWalk
  where
-  findClose :: ObjectType -> Maybe GameObject
-  findClose t = h ^? closeObjects . each . withType t
+  findClose :: (EntityDetails -> Bool) -> Maybe Entity
+  findClose t = h ^? closeEntities . each . filtered (t . (^. details))
   followOrDo :: [Direction] -> DecisionType -> Decision
   followOrDo []          t = Decision t Center
   followOrDo [direction] t = Decision t direction
   followOrDo (direction : _) _
     | has
-      ( closeHivelings
+      ( closeEntities
       . each
-      . filtered ((== direction2Offset direction) . (^. position))
+      . filtered ((== direction2Offset direction) . (^. base . position))
       )
       h
     = randomWalk
@@ -390,27 +405,21 @@ drawGameState g = str
   renderPosition p = fromMaybe ' ' (pointsOfInterest !? p)
   pointsOfInterest :: Map Position Char
   pointsOfInterest =
-    fromListWith const
-      $  (   g
-         ^.. objects
-         .   each
-         .   to
-               (\obj ->
-                 (obj ^. objectPosition, obj ^. objectType . to renderType)
-               )
-         )
-      ++ (g ^.. hivelings . each . to (\h -> (h ^. position, renderHiveling h)))
-  renderHiveling :: Hiveling -> Char
-  renderHiveling h | h ^. hasNutrition && h ^. spreadsPheromones = 'û'
-                   | h ^. hasNutrition      = 'î'
-                   | h ^. spreadsPheromones = 'u'
-                   | otherwise              = 'i'
-  renderType :: ObjectType -> Char
-  renderType t = case t of
+    fromList
+      $   g
+      ^.. entities
+      .   each
+      .   to (\e -> (e ^. base . position, render $ e ^. details))
+  render :: EntityDetails -> Char
+  render t = case t of
     Nutrition    -> 'N'
     HiveEntrance -> 'H'
     Pheromone    -> '.'
     Obstacle     -> 'X'
+    Hiveling h | h ^. hasNutrition && h ^. spreadsPheromones -> 'û'
+               | h ^. hasNutrition      -> 'î'
+               | h ^. spreadsPheromones -> 'u'
+               | otherwise              -> 'i'
 
 drawUI :: AppState -> [Widget Name]
 drawUI s =
