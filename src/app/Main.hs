@@ -77,6 +77,8 @@ import           Lens.Micro                     ( Lens'
                                                 , lens
                                                 , filtered
                                                 , _Just
+                                                , _1
+                                                , _2
                                                 )
 import           Lens.Micro.Platform            ( makeLenses )
 
@@ -115,6 +117,8 @@ data EntityDetails = Hiveling HivelingProps
                    | HiveEntrance
                    | Pheromone
                    | Obstacle deriving (Eq, Show)
+
+type Hiveling' = (EntityBase, HivelingProps)
 
 data Entity = Entity {
   _base :: !EntityBase
@@ -168,8 +172,10 @@ hivelingProps = lens getter setter
 
 -- Game init & advancing
 addEntity :: Int -> EntityDetails -> Position -> GameState -> GameState
-addEntity z d p state = state & nextId +~ 1 & entities %~ (new :)
-  where new = Entity (EntityBase (state ^. nextId) p z) d
+addEntity _zIndex _details _position state =
+  state & nextId +~ 1 & entities %~ (new :)
+ where
+  new = Entity { _base = EntityBase { _identifier = state ^. nextId, .. }, .. }
 
 startingState :: GameState
 startingState =
@@ -193,34 +199,33 @@ startingState =
   nutrition    = (,) <$> [-10 .. 10] <*> [-10, 10]
 
 doGameStep :: GameState -> GameState
-doGameStep s =
+doGameStep state =
   let (hivelingWithDecision, gen) =
           runState
         -- TODO: Shuffle
-                   (mapM takeDecision hivelings) (s ^. randomGen)
-  in  foldl applyDecision (s & randomGen .~ gen) hivelingWithDecision
+                   (mapM takeDecision hivelings) (state ^. randomGen)
+  in  foldl applyDecision (state & randomGen .~ gen) hivelingWithDecision
  where
-  hivelings :: [(EntityBase, HivelingProps)]
-  hivelings = s ^.. entities . each . asHiveling . _Just
-  takeDecision :: (EntityBase, HivelingProps)
-               -> State StdGen (EntityBase, HivelingProps, Decision)
-  takeDecision (b, h) = do
+  hivelings :: [Hiveling']
+  hivelings = state ^.. entities . each . asHiveling . _Just
+  takeDecision :: Hiveling' -> State StdGen (Hiveling', Decision)
+  takeDecision hiveling = do
     g <- get
     let (g', g'') = split g
-        center    = b ^. position
+        center    = hiveling ^. _1 . position
         isClose p = distance p center < 8
         decision = hivelingMind $ HivelingMindInput
-          { _closeEntities   = s
+          { _closeEntities   = state
                                ^.. entities
                                .   each
                                .   filtered (isClose . (^. base . position))
                                &   each
                                %~  forHivelingMind center
-          , _currentHiveling = h
+          , _currentHiveling = hiveling ^. _2
           , _randomInput     = g''
           }
     put g'
-    return (b, h, decision)
+    return (hiveling, decision)
   forHivelingMind :: Position -> Entity -> Entity
   forHivelingMind center e =
     e
@@ -233,8 +238,8 @@ doGameStep s =
       .  identifier
       .~ -1
 
-applyDecision :: GameState -> (EntityBase, HivelingProps, Decision) -> GameState
-applyDecision state (b, h, Decision t direction) = case t of
+applyDecision :: GameState -> (Hiveling', Decision) -> GameState
+applyDecision state (hiveling, Decision t direction) = case t of
   Move   -> case topEntityAtTarget of
     Just (Entity _ Obstacle    ) -> state & score -~ 1
     Just (Entity _ (Hiveling _)) -> state
@@ -246,7 +251,7 @@ applyDecision state (b, h, Decision t direction) = case t of
         .  (zIndex .~ (b' ^. zIndex) + 1)
     Nothing -> state & currentEntity . base . position .~ targetPos
   Pickup -> case topEntityAtTarget of
-    Just (Entity _ Nutrition) -> if h ^. hasNutrition
+    Just (Entity _ Nutrition) -> if hiveling ^. _2 . hasNutrition
       then state
       else
         state
@@ -257,7 +262,7 @@ applyDecision state (b, h, Decision t direction) = case t of
         %~ filter ((/= topEntityAtTarget) . Just)
     _                         -> state
   Drop   -> case topEntityAtTarget of
-    Just (Entity _ HiveEntrance) -> if h ^. hasNutrition
+    Just (Entity _ HiveEntrance) -> if hiveling ^. _2 . hasNutrition
       then state & currentHivelingProps . hasNutrition .~ False & score +~ 10
       else state
     Just _                       -> state
@@ -270,7 +275,7 @@ applyDecision state (b, h, Decision t direction) = case t of
         .~ False
  where
   targetPos :: Position
-  targetPos = (b ^. position) `go` direction
+  targetPos = (hiveling ^. _1 . position) `go` direction
   topEntityAtTarget :: Maybe Entity
   topEntityAtTarget =
     maximumByMay (comparing (^. base . zIndex))
@@ -279,26 +284,28 @@ applyDecision state (b, h, Decision t direction) = case t of
       .   each
       .   filtered ((== targetPos) . (^. base . position))
   currentEntity :: Traversal' GameState Entity
-  currentEntity
-    = entities
+  currentEntity =
+    entities
       . each
-      . filtered ((== b ^. identifier) . (^. base . identifier))
+      . filtered ((== hiveling ^. _1 . identifier) . (^. base . identifier))
   currentHivelingProps :: Traversal' GameState HivelingProps
   currentHivelingProps = currentEntity . hivelingProps . _Just
 
 
 -- Hive mind
 hivelingMind :: HivelingMindInput -> Decision
-hivelingMind h
-  | h ^. currentHiveling . hasNutrition = case findClose (== HiveEntrance) of
-    Just obj -> path (obj ^. base . position) `followOrDo` Drop
-    Nothing  -> randomWalk
+hivelingMind input
+  | input ^. currentHiveling . hasNutrition = case
+      findClose (== HiveEntrance)
+    of
+      Just obj -> path (obj ^. base . position) `followOrDo` Drop
+      Nothing  -> randomWalk
   | otherwise = case findClose (== Nutrition) of
     Just obj -> path (obj ^. base . position) `followOrDo` Pickup
     Nothing  -> randomWalk
  where
   findClose :: (EntityDetails -> Bool) -> Maybe Entity
-  findClose t = h ^? closeEntities . each . filtered (t . (^. details))
+  findClose t = input ^? closeEntities . each . filtered (t . (^. details))
   followOrDo :: [Direction] -> DecisionType -> Decision
   followOrDo []          t = Decision t Center
   followOrDo [direction] t = Decision t direction
@@ -308,7 +315,7 @@ hivelingMind h
          . each
          . filtered ((== direction2Offset direction) . (^. base . position))
          )
-         h
+         input
       then randomWalk
       else Decision Move direction
   randomWalk :: Decision
@@ -317,7 +324,7 @@ hivelingMind h
       $ let minDirection = minBound :: Direction
             maxDirection = maxBound :: Direction
             (r, _) = randomR (fromEnum minDirection, fromEnum maxDirection)
-                             (h ^. randomInput)
+                             (input ^. randomInput)
         in  toEnum r
 
 -- Direction
