@@ -8,15 +8,17 @@ module Main
   )
 where
 
+import           Safe.Foldable                  ( maximumByMay )
+import           Data.Ord                       ( comparing )
 import           GHC.Float                      ( int2Double )
-import           Data.List                      ( find )
+import           Data.List                      ( find
+                                                , maximumBy
+                                                )
 import           Data.Map.Strict                ( Map
                                                 , (!?)
-                                                , fromList
+                                                , fromListWith
                                                 )
-import           Data.Maybe                     ( fromMaybe
-                                                , fromJust
-                                                )
+import           Data.Maybe                     ( fromJust )
 import           Control.Monad.Trans.State      ( State
                                                 , get
                                                 , put
@@ -96,7 +98,7 @@ data DecisionType = Move
 data Decision = Decision DecisionType Direction deriving (Eq, Show)
 
 data HivelingProps = HivelingProps {
- _hasNutrition :: !Bool
+  _hasNutrition :: !Bool
  ,_spreadsPheromones :: !Bool
 } deriving (Eq, Show)
 makeLenses ''HivelingProps
@@ -104,6 +106,7 @@ makeLenses ''HivelingProps
 data EntityBase = EntityBase {
   _identifier :: !Int
  ,_position :: !Position
+ ,_zIndex :: !Int
 } deriving (Eq, Show)
 makeLenses ''EntityBase
 
@@ -114,7 +117,7 @@ data EntityDetails = Hiveling HivelingProps
                    | Obstacle deriving (Eq, Show)
 
 data Entity = Entity {
- _base :: !EntityBase
+  _base :: !EntityBase
  ,_details :: !EntityDetails
 } deriving (Eq, Show)
 makeLenses ''Entity
@@ -170,14 +173,14 @@ entityAt :: Position -> Traversal' GameState Entity
 entityAt p = entities . each . filtered ((== p) . (^. base . position))
 
 -- Game init & advancing
-addEntity :: EntityDetails -> Position -> GameState -> GameState
-addEntity d p state = state & nextId +~ 1 & entities %~ (new :)
-  where new = Entity (EntityBase (state ^. nextId) p) d
+addEntity :: Int -> EntityDetails -> Position -> GameState -> GameState
+addEntity z d p state = state & nextId +~ 1 & entities %~ (new :)
+  where new = Entity (EntityBase (state ^. nextId) p z) d
 
 startingState :: GameState
 startingState =
   foldr
-      (uncurry addEntity)
+      (uncurry $ addEntity 0)
       GameState { _entities  = []
                 , _nextId    = 0
                 , _score     = 0
@@ -239,8 +242,14 @@ doGameStep s =
 applyDecision :: GameState -> (EntityBase, HivelingProps, Decision) -> GameState
 applyDecision state (b, h, Decision t direction) = case t of
   Move   -> case entityAtTarget of
-    Just (Entity _ Obstacle) -> state & score -~ 1
-    Just _ -> state
+    Just (Entity _ Obstacle    ) -> state & score -~ 1
+    Just (Entity _ (Hiveling _)) -> state
+    Just (Entity b' _) ->
+      state
+        &  currentEntity
+        .  base
+        %~ (position .~ targetPos)
+        .  (zIndex .~ (b' ^. zIndex) + 1)
     Nothing -> state & currentEntity . base . position .~ targetPos
   Pickup -> case entityAtTarget of
     Just (Entity _ Nutrition) -> if h ^. hasNutrition
@@ -269,7 +278,10 @@ applyDecision state (b, h, Decision t direction) = case t of
   targetPos :: Position
   targetPos = (b ^. position) `go` direction
   entityAtTarget :: Maybe Entity
-  entityAtTarget = state ^? entityAt targetPos
+  entityAtTarget
+    = maximumByMay (comparing (^. base . zIndex))
+      $   state
+      ^.. entityAt targetPos
   currentEntity :: Traversal' GameState Entity
   currentEntity = entities . each . withId (b ^. identifier)
   currentHivelingProps :: Traversal' GameState HivelingProps
@@ -291,16 +303,15 @@ hivelingMind h
   followOrDo :: [Direction] -> DecisionType -> Decision
   followOrDo []          t = Decision t Center
   followOrDo [direction] t = Decision t direction
-  followOrDo (direction : _) _
-    | has
-      ( closeEntities
-      . each
-      . filtered ((== direction2Offset direction) . (^. base . position))
-      )
-      h
-    = randomWalk
-    | otherwise
-    = Decision Move direction
+  followOrDo (direction : _) _ =
+    if has
+         ( closeEntities
+         . each
+         . filtered ((== direction2Offset direction) . (^. base . position))
+         )
+         h
+      then randomWalk
+      else Decision Move direction
   randomWalk :: Decision
   randomWalk =
     Decision Move
@@ -402,14 +413,15 @@ drawGameState g = str
   $ unlines [ [ renderPosition (x, y) | x <- [-20 .. 20] ] | y <- [-20 .. 20] ]
  where
   renderPosition :: Position -> Char
-  renderPosition p = fromMaybe ' ' (pointsOfInterest !? p)
-  pointsOfInterest :: Map Position Char
+  renderPosition p = maybe ' ' (^. details . to render) (pointsOfInterest !? p)
+  pointsOfInterest :: Map Position Entity
   pointsOfInterest =
-    fromList
+    fromListWith
+        (\old new -> maximumBy (comparing (^. base . zIndex)) [old, new])
       $   g
       ^.. entities
       .   each
-      .   to (\e -> (e ^. base . position, render $ e ^. details))
+      .   to (\e -> (e ^. base . position, e))
   render :: EntityDetails -> Char
   render t = case t of
     Nutrition    -> 'N'

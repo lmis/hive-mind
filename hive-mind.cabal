@@ -11,6 +11,7 @@ library
   ghc-options: -Wall -O2 -threaded
   build-depends:       base
                       ,brick
+                      ,safe
                       ,raw-strings-qq
                       ,microlens-platform
                       ,QuickCheck
