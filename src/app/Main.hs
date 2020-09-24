@@ -146,9 +146,6 @@ data AppState = AppState {
 makeLenses ''AppState
 
 -- Traversals & Utils
-withId :: Int -> Traversal' Entity Entity
-withId x = filtered $ (== x) . (^. base . identifier)
-
 asHiveling :: Lens' Entity (Maybe (EntityBase, HivelingProps))
 asHiveling = lens getter setter
  where
@@ -168,9 +165,6 @@ hivelingProps = lens getter setter
   setter :: Entity -> Maybe HivelingProps -> Entity
   setter (Entity b (Hiveling _)) (Just d) = Entity b (Hiveling d)
   setter e                       _        = e
-
-entityAt :: Position -> Traversal' GameState Entity
-entityAt p = entities . each . filtered ((== p) . (^. base . position))
 
 -- Game init & advancing
 addEntity :: Int -> EntityDetails -> Position -> GameState -> GameState
@@ -241,7 +235,7 @@ doGameStep s =
 
 applyDecision :: GameState -> (EntityBase, HivelingProps, Decision) -> GameState
 applyDecision state (b, h, Decision t direction) = case t of
-  Move   -> case entityAtTarget of
+  Move   -> case topEntityAtTarget of
     Just (Entity _ Obstacle    ) -> state & score -~ 1
     Just (Entity _ (Hiveling _)) -> state
     Just (Entity b' _) ->
@@ -251,7 +245,7 @@ applyDecision state (b, h, Decision t direction) = case t of
         %~ (position .~ targetPos)
         .  (zIndex .~ (b' ^. zIndex) + 1)
     Nothing -> state & currentEntity . base . position .~ targetPos
-  Pickup -> case entityAtTarget of
+  Pickup -> case topEntityAtTarget of
     Just (Entity _ Nutrition) -> if h ^. hasNutrition
       then state
       else
@@ -260,9 +254,9 @@ applyDecision state (b, h, Decision t direction) = case t of
         .  hasNutrition
         .~ True
         &  entities
-        %~ filter ((/= entityAtTarget) . Just)
+        %~ filter ((/= topEntityAtTarget) . Just)
     _                         -> state
-  Drop   -> case entityAtTarget of
+  Drop   -> case topEntityAtTarget of
     Just (Entity _ HiveEntrance) -> if h ^. hasNutrition
       then state & currentHivelingProps . hasNutrition .~ False & score +~ 10
       else state
@@ -277,13 +271,18 @@ applyDecision state (b, h, Decision t direction) = case t of
  where
   targetPos :: Position
   targetPos = (b ^. position) `go` direction
-  entityAtTarget :: Maybe Entity
-  entityAtTarget
-    = maximumByMay (comparing (^. base . zIndex))
+  topEntityAtTarget :: Maybe Entity
+  topEntityAtTarget =
+    maximumByMay (comparing (^. base . zIndex))
       $   state
-      ^.. entityAt targetPos
+      ^.. entities
+      .   each
+      .   filtered ((== targetPos) . (^. base . position))
   currentEntity :: Traversal' GameState Entity
-  currentEntity = entities . each . withId (b ^. identifier)
+  currentEntity
+    = entities
+      . each
+      . filtered ((== b ^. identifier) . (^. base . identifier))
   currentHivelingProps :: Traversal' GameState HivelingProps
   currentHivelingProps = currentEntity . hivelingProps . _Just
 
