@@ -18,6 +18,7 @@ import           Data.Ord                       ( comparing )
 import           GHC.Float                      ( int2Double )
 import           Data.List                      ( find
                                                 , maximumBy
+                                                , sortOn
                                                 )
 import           Data.Map.Strict                ( Map
                                                 , (!?)
@@ -47,8 +48,10 @@ import           Brick                          ( App(..)
                                                 , neverShowCursor
                                                 , continue
                                                 , halt
+                                                , clickable
                                                 , attrMap
                                                 , vBox
+                                                , hBox
                                                 , withBorderStyle
                                                 , str
                                                 , padLeftRight
@@ -114,6 +117,7 @@ data EntityBase = EntityBase {
   _identifier :: !Int
  ,_position :: !Position
  ,_zIndex :: !Int
+ ,_highlighted :: !Bool
 } deriving (Eq, Show)
 makeLenses ''EntityBase
 
@@ -146,7 +150,7 @@ data GameState = GameState {
 } deriving (Show)
 makeLenses ''GameState
 
-type Name = ()
+type Name = Position
 data AppEvent = AdvanceGame deriving (Eq, Show, Ord)
 data AppState = AppState {
   _gameState :: !GameState
@@ -181,7 +185,13 @@ addEntity :: Int -> EntityDetails -> Position -> GameState -> GameState
 addEntity _zIndex _details _position state =
   state & nextId +~ 1 & entities %~ (new :)
  where
-  new = Entity { _base = EntityBase { _identifier = state ^. nextId, .. }, .. }
+  new = Entity
+    { _base = EntityBase { _identifier  = state ^. nextId
+                         , _highlighted = False
+                         , ..
+                         }
+    , ..
+    }
 
 startingState :: GameState
 startingState =
@@ -200,7 +210,7 @@ startingState =
  where
   hivelings    = (1, ) <$> [1 .. 4]
   entrances    = (,) <$> [-15, 0, 15] <*> [-15, 0, 15]
-  topAndBottom = (,) <$> [-20 .. 20] <*> [-20, 20]
+  topAndBottom = (,) <$> [-19 .. 19] <*> [-20, 20]
   sides        = (,) <$> [-20, 20] <*> [-20 .. 20]
   nutrition    = (,) <$> [-10 .. 10] <*> [-10, 10]
 
@@ -433,17 +443,27 @@ handleEvent s (VtyEvent (V.EvKey (V.KChar '1') []       )) = setSpeed s 300
 handleEvent s (VtyEvent (V.EvKey (V.KChar '2') []       )) = setSpeed s 100
 handleEvent s (VtyEvent (V.EvKey (V.KChar '3') []       )) = setSpeed s 50
 handleEvent s (VtyEvent (V.EvKey (V.KChar '4') []       )) = setSpeed s 10
+handleEvent s (MouseDown p V.BLeft _ _) =
+  continue
+    $  s
+    &  gameState
+    .  entities
+    .  each
+    .  base
+    %~ (\e -> e & highlighted .~ e ^. position . to (== p))
 handleEvent s (AppEvent AdvanceGame) =
   continue $ s & iteration +~ 1 & gameState %~ doGameStep
 handleEvent s _ = continue s
 
 -- Rendering
-drawGameState :: GameState -> Widget Name
-drawGameState g = str
-  $ unlines [ [ renderPosition (x, y) | x <- [-20 .. 20] ] | y <- [-20 .. 20] ]
+drawGameState :: GameState -> [Widget Name]
+drawGameState g =
+  [ hBox [ renderPosition (x, y) | x <- [-20 .. 20] ] | y <- [-20 .. 20] ]
  where
-  renderPosition :: Position -> Char
-  renderPosition p = maybe ' ' (^. details . to render) (pointsOfInterest !? p)
+  renderPosition :: Position -> Widget Name
+  renderPosition p = clickable p . str $ maybe " "
+                                               (^. details . to render)
+                                               (pointsOfInterest !? p)
   pointsOfInterest :: Map Position Entity
   pointsOfInterest =
     fromListWith
@@ -452,16 +472,16 @@ drawGameState g = str
       ^.. entities
       .   each
       .   to (\e -> (e ^. base . position, e))
-  render :: EntityDetails -> Char
+  render :: EntityDetails -> String
   render t = case t of
-    Nutrition    -> 'N'
-    HiveEntrance -> 'H'
-    Pheromone    -> '.'
-    Obstacle     -> 'X'
-    Hiveling h | h ^. hasNutrition && h ^. spreadsPheromones -> 'û'
-               | h ^. hasNutrition      -> 'î'
-               | h ^. spreadsPheromones -> 'u'
-               | otherwise              -> 'i'
+    Nutrition    -> "N"
+    HiveEntrance -> "H"
+    Pheromone    -> "."
+    Obstacle     -> "X"
+    Hiveling h | h ^. hasNutrition && h ^. spreadsPheromones -> "û"
+               | h ^. hasNutrition      -> "î"
+               | h ^. spreadsPheromones -> "u"
+               | otherwise              -> "i"
 
 drawUI :: AppState -> [Widget Name]
 drawUI s =
@@ -469,11 +489,24 @@ drawUI s =
       .   labeledVBox "Hive Mind"
       $   C.hCenter
       <$> [ labeledVBox
-            "Score"
-            [padLeftRight 10 . str . show $ s ^. gameState . score]
-          , drawGameState $ s ^. gameState
+              "Score"
+              [padLeftRight 10 . str . show $ s ^. gameState . score]
           ]
+      ++  drawGameState (s ^. gameState)
+      ++  (highlightBox <$> highlights)
   ]
+ where
+  highlights :: [Entity]
+  highlights = sortOn
+    (^. base . zIndex . to negate)
+    (s ^.. gameState . entities . each . filtered (^. base . highlighted))
+  highlightBox :: Entity -> Widget Name
+  highlightBox e = labeledVBox (e ^. base . position . to show)
+                               [padLeftRight 10 . str . info $ e ^. details]
+  info :: EntityDetails -> String
+  info (Hiveling d) =
+    unlines ["Hiveling", "Food: " ++ d ^. hasNutrition . to show]
+  info d = show d
 
 theMap :: AttrMap
 theMap = attrMap V.defAttr []
