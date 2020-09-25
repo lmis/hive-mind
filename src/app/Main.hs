@@ -8,6 +8,11 @@ module Main
   )
 where
 
+import           Data.IORef                     ( IORef
+                                                , readIORef
+                                                , modifyIORef
+                                                , newIORef
+                                                )
 import           Safe.Foldable                  ( maximumByMay )
 import           Data.Ord                       ( comparing )
 import           GHC.Float                      ( int2Double )
@@ -145,8 +150,9 @@ type Name = ()
 data AppEvent = AdvanceGame deriving (Eq, Show, Ord)
 data AppState = AppState {
   _gameState :: !GameState
+ ,_running :: IORef (Bool, Int)
  ,_iteration :: !Int
-} deriving (Show)
+}
 makeLenses ''AppState
 
 -- Traversals & Utils
@@ -374,8 +380,9 @@ path p@(x, y) = case offset2Direction p of
 main :: IO ()
 main = do
   -- channel to inject events into main loop
+  _running   <- newIORef (True, 100)
   chan       <- newBChan 10
-  _          <- advanceGame chan
+  _          <- advanceGame _running chan
 
   initialVty <- buildVty
   void $ customMain
@@ -399,16 +406,33 @@ app = App { appDraw         = drawUI
           , appAttrMap      = const theMap
           }
 
-advanceGame :: BChan AppEvent -> IO ThreadId
-advanceGame chan = forkIO $ forever $ do
-  writeBChan chan AdvanceGame
-  threadDelay $ 100 * 1000
+advanceGame :: IORef (Bool, Int) -> BChan AppEvent -> IO ThreadId
+advanceGame ref chan = forkIO $ forever $ do
+  runs <- readIORef ref
+  case runs of
+    (True, delay) -> do
+      threadDelay $ delay * 1000
+      writeBChan chan AdvanceGame
+    _             -> return ()
+
+
+setSpeed :: AppState -> Int -> EventM Name (Next AppState)
+setSpeed s delay = do
+  _ <- liftIO $ modifyIORef (s ^. running) (_2 .~ delay)
+  continue s
 
 handleEvent :: AppState
             -> BrickEvent Name AppEvent
             -> EventM Name (Next AppState)
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = halt s
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'd') [V.MCtrl])) = halt s
+handleEvent s (VtyEvent (V.EvKey (V.KChar ' ') []       )) = do
+  _ <- liftIO $ modifyIORef (s ^. running) (_1 %~ not)
+  continue s
+handleEvent s (VtyEvent (V.EvKey (V.KChar '1') []       )) = setSpeed s 300
+handleEvent s (VtyEvent (V.EvKey (V.KChar '2') []       )) = setSpeed s 100
+handleEvent s (VtyEvent (V.EvKey (V.KChar '3') []       )) = setSpeed s 50
+handleEvent s (VtyEvent (V.EvKey (V.KChar '4') []       )) = setSpeed s 10
 handleEvent s (AppEvent AdvanceGame) =
   continue $ s & iteration +~ 1 & gameState %~ doGameStep
 handleEvent s _ = continue s
