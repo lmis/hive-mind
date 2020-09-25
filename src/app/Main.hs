@@ -160,13 +160,13 @@ data AppState = AppState {
 makeLenses ''AppState
 
 -- Traversals & Utils
-asHiveling :: Lens' Entity (Maybe (EntityBase, HivelingProps))
+asHiveling :: Lens' Entity (Maybe Hiveling')
 asHiveling = lens getter setter
  where
-  getter :: Entity -> Maybe (EntityBase, HivelingProps)
+  getter :: Entity -> Maybe Hiveling'
   getter (Entity b (Hiveling d)) = Just (b, d)
   getter _                       = Nothing
-  setter :: Entity -> Maybe (EntityBase, HivelingProps) -> Entity
+  setter :: Entity -> Maybe Hiveling' -> Entity
   setter (Entity _ (Hiveling _)) (Just (b, d)) = Entity b (Hiveling d)
   setter e                       _             = e
 
