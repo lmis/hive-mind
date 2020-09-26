@@ -4,9 +4,14 @@
 #-}
 module Main
   ( main
+  , lastDecision
   )
 where
 
+import           Text.Pretty.Simple             ( pShowNoColor )
+import           Data.Text.Lazy                 ( Text
+                                                , toStrict
+                                                )
 import           Data.IORef                     ( IORef
                                                 , readIORef
                                                 , modifyIORef
@@ -49,10 +54,13 @@ import           Brick                          ( App(..)
                                                 , halt
                                                 , clickable
                                                 , attrMap
+                                                , (<+>)
+                                                , (<=>)
                                                 , vBox
                                                 , hBox
                                                 , withBorderStyle
                                                 , str
+                                                , txt
                                                 , padLeftRight
                                                 )
 import qualified Brick.Widgets.Center          as C
@@ -107,7 +115,8 @@ data DecisionType = Move
 data Decision = Decision DecisionType Direction deriving (Eq, Show)
 
 data HivelingProps = HivelingProps {
-  _hasNutrition :: !Bool
+  _lastDecision :: !Decision
+ ,_hasNutrition :: !Bool
  ,_spreadsPheromones :: !Bool
 } deriving (Eq, Show)
 makeLenses ''HivelingProps
@@ -208,7 +217,14 @@ startingState =
                 , _score     = 0
                 , _randomGen = mkStdGen 42
                 }
-    $  ((Hiveling $ HivelingProps False False, ) <$> hivelings)
+    $  (   ( Hiveling $ HivelingProps { _lastDecision = Decision Move Center
+                                      , _hasNutrition = False
+                                      , _spreadsPheromones = False
+                                      }
+           ,
+           )
+       <$> hivelings
+       )
     ++ ((HiveEntrance, ) <$> entrances)
     ++ ((Obstacle, ) <$> topAndBottom)
     ++ ((Obstacle, ) <$> sides)
@@ -473,9 +489,9 @@ handleEvent s (AppEvent AdvanceGame) =
 handleEvent s _ = continue s
 
 -- Rendering
-drawGameState :: AppState -> [Widget Name]
+drawGameState :: AppState -> Widget Name
 drawGameState state =
-  [ hBox [ renderPosition (x, y) | x <- [-10 .. 10] ] | y <- [-20 .. 20] ]
+  vBox [ hBox [ renderPosition (x, y) | x <- [-10 .. 10] ] | y <- [-20 .. 20] ]
  where
   renderPosition :: Position -> Widget Name
   renderPosition p = clickable p . str . obscureInvisible p $ maybe
@@ -523,14 +539,22 @@ drawGameState state =
 drawUI :: AppState -> [Widget Name]
 drawUI s =
   [ C.hCenter
-      .   labeledVBox "Hive Mind"
-      $   C.hCenter
-      <$> [ labeledVBox
-              "Score"
-              [padLeftRight 10 . str . show $ s ^. gameState . score]
-          ]
-      ++  drawGameState s
-      ++  (highlightBox <$> highlights)
+      .   labeledBorder "Hive Mind"
+      $   (  C.hCenter
+          .  labeledBorder "Score"
+          $  padLeftRight 5
+          .  str
+          .  show
+          $  s
+          ^. gameState
+          .  score
+          )
+      <=> (C.hCenter (labeledBorder "Wold" (drawGameState s)) <+> C.hCenter
+            (labeledBorder "Selected" $ if null highlights
+              then padLeftRight 10 $ str "Nothing selected"
+              else hBox (highlightBox <$> highlights)
+            )
+          )
   ]
  where
   highlights :: [Entity]
@@ -538,18 +562,21 @@ drawUI s =
     (^. base . zIndex . to negate)
     (s ^.. gameState . entities . each . filtered (^. base . highlighted))
   highlightBox :: Entity -> Widget Name
-  highlightBox e = labeledVBox (e ^. base . position . to show)
-                               [padLeftRight 10 . str . info $ e ^. details]
-  info :: EntityDetails -> String
-  info (Hiveling d) =
-    unlines ["Hiveling", "Food: " ++ d ^. hasNutrition . to show]
-  info d = show d
+  highlightBox e =
+    labeledBorder (e ^. base . position . to show)
+      $  txt
+      .  toStrict
+      .  info
+      $  e
+      ^. details
+  info :: EntityDetails -> Text
+  info (Hiveling d) = pShowNoColor d
+  info d            = pShowNoColor d
 
 theMap :: AttrMap
 theMap = attrMap V.defAttr []
 
-labeledVBox :: String -> [Widget a] -> Widget a
-labeledVBox label content =
+labeledBorder :: String -> Widget a -> Widget a
+labeledBorder label =
   withBorderStyle BS.unicodeBold
-    $ B.borderWithLabel (padLeftRight 1 $ str label)
-    $ vBox content
+    . B.borderWithLabel (padLeftRight 1 $ str label)

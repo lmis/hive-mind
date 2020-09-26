@@ -12,7 +12,9 @@ library
   build-depends:       base
                       ,brick
                       ,safe
+                      ,pretty-simple
                       ,raw-strings-qq
+                      ,text
                       ,microlens-platform
                       ,QuickCheck
   default-language:    Haskell2010
