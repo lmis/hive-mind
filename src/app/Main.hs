@@ -282,42 +282,45 @@ doGameStep state =
       .~ -1
 
 applyDecision :: GameState -> (Hiveling', Decision) -> GameState
-applyDecision state (hiveling, Decision t direction) = case t of
-  Move   -> case topEntityAtTarget of
-    Just (Entity _ Obstacle    ) -> state & score -~ 1
-    Just (Entity _ (Hiveling _)) -> state
-    Just (Entity b' _) ->
-      state
-        &  currentEntity
-        .  base
-        %~ (position .~ targetPos)
-        .  (zIndex .~ (b' ^. zIndex) + 1)
-    Nothing ->
-      state & currentEntity . base %~ (position .~ targetPos) . (zIndex .~ 0)
-  Pickup -> case topEntityAtTarget of
-    Just (Entity _ Nutrition) -> if hiveling ^. _2 . hasNutrition
-      then state
-      else
+applyDecision state (hiveling, decision@(Decision t direction)) =
+  storeDecision $ case t of
+    Move   -> case topEntityAtTarget of
+      Just (Entity _ Obstacle    ) -> state & score -~ 1
+      Just (Entity _ (Hiveling _)) -> state
+      Just (Entity b' _) ->
         state
-        &  currentHivelingProps
-        .  hasNutrition
-        .~ True
-        &  entities
-        %~ filter (Just `isNot` topEntityAtTarget)
-    _                         -> state
-  Drop   -> case topEntityAtTarget of
-    Just (Entity _ HiveEntrance) -> if hiveling ^. _2 . hasNutrition
-      then state & currentHivelingProps . hasNutrition .~ False & score +~ 10
-      else state
-    Just _                       -> state
-    Nothing ->
-      state
-        &  score
-        -~ 100 -- No food waste!
-        &  currentHivelingProps
-        .  hasNutrition
-        .~ False
+          &  currentEntity
+          .  base
+          %~ (position .~ targetPos)
+          .  (zIndex .~ (b' ^. zIndex) + 1)
+      Nothing ->
+        state & currentEntity . base %~ (position .~ targetPos) . (zIndex .~ 0)
+    Pickup -> case topEntityAtTarget of
+      Just (Entity _ Nutrition) -> if hiveling ^. _2 . hasNutrition
+        then state
+        else
+          state
+          &  currentHivelingProps
+          .  hasNutrition
+          .~ True
+          &  entities
+          %~ filter (Just `isNot` topEntityAtTarget)
+      _                         -> state
+    Drop   -> case topEntityAtTarget of
+      Just (Entity _ HiveEntrance) -> if hiveling ^. _2 . hasNutrition
+        then state & currentHivelingProps . hasNutrition .~ False & score +~ 10
+        else state
+      Just _                       -> state
+      Nothing ->
+        state
+          &  score
+          -~ 100 -- No food waste!
+          &  currentHivelingProps
+          .  hasNutrition
+          .~ False
  where
+  storeDecision :: GameState -> GameState
+  storeDecision = currentHivelingProps . lastDecision .~ decision
   targetPos :: Position
   targetPos = (hiveling ^. _1 . position) `go` direction
   topEntityAtTarget :: Maybe Entity
@@ -554,7 +557,7 @@ drawUI s =
       <=> (C.hCenter (labeledBorder "Wold" (drawGameState s)) <+> C.hCenter
             (labeledBorder "Selected" $ if null highlights
               then padLeftRight 10 $ str "Nothing selected"
-              else hBox (highlightBox <$> highlights)
+              else vBox (highlightBox <$> highlights)
             )
           )
   ]
@@ -565,8 +568,9 @@ drawUI s =
     (s ^.. gameState . entities . each . filtered (^. base . highlighted))
   highlightBox :: Entity -> Widget Name
   highlightBox e =
-    labeledBorder (e ^. base . position . to show)
-      $  txt
+    C.hCenter
+      $  labeledBorder (e ^. base . position . to show)
+      .  txt
       .  toStrict
       .  info
       $  e
