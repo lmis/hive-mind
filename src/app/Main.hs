@@ -330,6 +330,7 @@ applyDecision state (hiveling, decision@(Decision t direction)) =
       ^.. entities
       .   each
       .   filtered ((^. base . position) `is` targetPos)
+      . filtered ((^. base . identifier) `isNot` (hiveling ^. _1 . identifier))
   currentEntity :: Traversal' GameState Entity
   currentEntity =
     entities
