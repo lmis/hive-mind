@@ -221,8 +221,8 @@ startingState =
   sides        = (,) <$> [-20, 20] <*> [-20 .. 20]
   nutrition    = (,) <$> [-10 .. 10] <*> [-10, 10]
 
-sees :: Hiveling' -> Entity -> Bool
-sees h e = distance (e ^. base . position) (h ^. _1 . position) < 8
+sees :: Hiveling' -> Position -> Bool
+sees h p = distance p (h ^. _1 . position) < 8
 
 doGameStep :: GameState -> GameState
 doGameStep state =
@@ -246,7 +246,7 @@ doGameStep state =
           .   each
           .   filtered
                 ((^. base . identifier) `isNot` (hiveling ^. _1 . identifier))
-          .   filtered (hiveling `sees`)
+          .   filtered ((hiveling `sees`) . (^. base . position))
           &   each
           %~  forHivelingMind hiveling
         , _currentHiveling = hiveling ^. _2
@@ -475,26 +475,41 @@ handleEvent s _ = continue s
 
 -- Rendering
 drawGameState :: AppState -> [Widget Name]
-drawGameState s =
+drawGameState state =
   [ hBox [ renderPosition (x, y) | x <- [-20 .. 20] ] | y <- [-20 .. 20] ]
  where
   renderPosition :: Position -> Widget Name
-  renderPosition p = clickable p . str $ maybe " "
-                                               (^. details . to render)
-                                               (pointsOfInterest !? p)
+  renderPosition p = clickable p . str . obscureInvisible p $ maybe
+    " "
+    (^. details . to render)
+    (pointsOfInterest !? p)
   pointsOfInterest :: Map Position Entity
   pointsOfInterest =
     fromListWith
         (\old new -> maximumBy (comparing (^. base . zIndex)) [old, new])
       $   (\e -> (e ^. base . position, e))
-      <$> visibleEntities
-  visibleEntities :: [Entity]
-  visibleEntities = if s ^. hideUnseen
-    then
-      let hivelings = s ^.. gameState . entities . each . asHiveling . _Just
-          seenByAnyHiveling e = or $ (`sees` e) <$> hivelings
-      in  s ^.. gameState . entities . each . filtered seenByAnyHiveling
-    else s ^. gameState . entities
+      <$> state
+      ^.  gameState
+      .   entities
+  highlights :: [Position]
+  highlights =
+    state
+      ^.. gameState
+      .   entities
+      .   each
+      .   base
+      .   filtered (^. highlighted)
+      .   position
+  hivelings :: [Hiveling']
+  hivelings = state ^.. gameState . entities . each . asHiveling . _Just
+  noHivelingSees :: Position -> Bool
+  noHivelingSees p = and $ not . (`sees` p) <$> hivelings
+  noHighlightClose :: Position -> Bool
+  noHighlightClose p = and $ (> 2.5) . distance p <$> highlights
+  obscureInvisible :: Position -> String -> String
+  obscureInvisible p s
+    | state ^. hideUnseen && noHighlightClose p && noHivelingSees p = "?"
+    | otherwise = s
   render :: EntityDetails -> String
   render t = case t of
     Nutrition    -> "N"
