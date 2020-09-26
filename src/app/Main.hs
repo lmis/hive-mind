@@ -292,7 +292,8 @@ applyDecision state (hiveling, Decision t direction) = case t of
         .  base
         %~ (position .~ targetPos)
         .  (zIndex .~ (b' ^. zIndex) + 1)
-    Nothing -> state & currentEntity . base . position .~ targetPos
+    Nothing ->
+      state & currentEntity . base %~ (position .~ targetPos) . (zIndex .~ 0)
   Pickup -> case topEntityAtTarget of
     Just (Entity _ Nutrition) -> if hiveling ^. _2 . hasNutrition
       then state
@@ -350,8 +351,9 @@ hivelingMind input
   findClose :: (EntityDetails -> Bool) -> Maybe Entity
   findClose t = input ^? closeEntities . each . filtered (t . (^. details))
   followOrDo :: [Direction] -> DecisionType -> Decision
-  followOrDo []          t = Decision t Center
-  followOrDo [direction] t = Decision t direction
+  followOrDo (Center : p) t = p `followOrDo` t
+  followOrDo []           t = Decision t Center
+  followOrDo [direction]  t = Decision t direction
   followOrDo (direction : _) _ =
     if has
          ( closeEntities
