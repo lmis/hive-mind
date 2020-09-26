@@ -4,7 +4,6 @@
 #-}
 module Main
   ( main
-  -- Unused lenses
   )
 where
 
@@ -215,7 +214,7 @@ startingState =
     ++ ((Obstacle, ) <$> sides)
     ++ ((Nutrition, ) <$> nutrition)
  where
-  hivelings    = (1, ) <$> [1 .. 4]
+  hivelings    = [(1, 4), (-4, 8), (0, -9), (2, 2)]
   entrances    = (,) <$> [-15, 0, 15] <*> [-15, 0, 15]
   topAndBottom = (,) <$> [-19 .. 19] <*> [-20, 20]
   sides        = (,) <$> [-20, 20] <*> [-20 .. 20]
@@ -402,7 +401,7 @@ path p@(x, y) = case offset2Direction p of
 main :: IO ()
 main = do
   -- channel to inject events into main loop
-  _running   <- newIORef (True, 100)
+  _running   <- newIORef (False, 100)
   chan       <- newBChan 10
   _          <- advanceGame _running chan
 
