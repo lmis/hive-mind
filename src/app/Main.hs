@@ -214,14 +214,14 @@ startingState =
     ++ ((Obstacle, ) <$> sides)
     ++ ((Nutrition, ) <$> nutrition)
  where
-  hivelings    = [(1, 4), (-4, 8), (0, -9), (2, 2)]
-  entrances    = (,) <$> [-15, 0, 15] <*> [-15, 0, 15]
-  topAndBottom = (,) <$> [-19 .. 19] <*> [-20, 20]
-  sides        = (,) <$> [-20, 20] <*> [-20 .. 20]
-  nutrition    = (,) <$> [-10 .. 10] <*> [-10, 10]
+  hivelings    = [(1, 4), (-3, 12), (0, -6), (2, 2)]
+  entrances    = (,) <$> [-5, 5] <*> [-5, 5]
+  topAndBottom = (,) <$> [-9 .. 9] <*> [-20, -19, 19, 20]
+  sides        = (,) <$> [-10, 10] <*> [-20 .. 20]
+  nutrition    = (,) <$> [-5 .. 5] <*> [-15, -14, 0, 14, 15]
 
 sees :: Hiveling' -> Position -> Bool
-sees h p = distance p (h ^. _1 . position) < 8
+sees h p = distance p (h ^. _1 . position) < 6
 
 doGameStep :: GameState -> GameState
 doGameStep state =
@@ -475,11 +475,11 @@ handleEvent s _ = continue s
 -- Rendering
 drawGameState :: AppState -> [Widget Name]
 drawGameState state =
-  [ hBox [ renderPosition (x, y) | x <- [-20 .. 20] ] | y <- [-20 .. 20] ]
+  [ hBox [ renderPosition (x, y) | x <- [-10 .. 10] ] | y <- [-20 .. 20] ]
  where
   renderPosition :: Position -> Widget Name
   renderPosition p = clickable p . str . obscureInvisible p $ maybe
-    " "
+    "  "
     (^. details . to render)
     (pointsOfInterest !? p)
   pointsOfInterest :: Map Position Entity
@@ -507,18 +507,18 @@ drawGameState state =
   noHighlightClose p = and $ (> 2.5) . distance p <$> highlights
   obscureInvisible :: Position -> String -> String
   obscureInvisible p s
-    | state ^. hideUnseen && noHighlightClose p && noHivelingSees p = "?"
+    | state ^. hideUnseen && noHighlightClose p && noHivelingSees p = "??"
     | otherwise = s
   render :: EntityDetails -> String
   render t = case t of
-    Nutrition    -> "N"
-    HiveEntrance -> "H"
-    Pheromone    -> "."
-    Obstacle     -> "X"
-    Hiveling h | h ^. hasNutrition && h ^. spreadsPheromones -> "û"
-               | h ^. hasNutrition      -> "î"
-               | h ^. spreadsPheromones -> "u"
-               | otherwise              -> "i"
+    Nutrition    -> "**"
+    HiveEntrance -> "{}"
+    Pheromone    -> ".~"
+    Obstacle     -> "XX"
+    Hiveling h | h ^. hasNutrition && h ^. spreadsPheromones -> "U*"
+               | h ^. hasNutrition      -> "J*"
+               | h ^. spreadsPheromones -> "U="
+               | otherwise              -> "J="
 
 drawUI :: AppState -> [Widget Name]
 drawUI s =
