@@ -155,11 +155,18 @@ data AppEvent = AdvanceGame deriving (Eq, Show, Ord)
 data AppState = AppState {
   _gameState :: !GameState
  ,_running :: IORef (Bool, Int)
+ ,_hideUnseen :: !Bool
  ,_iteration :: !Int
 }
 makeLenses ''AppState
 
 -- Traversals & Utils
+is :: Eq b => (a -> b) -> b -> (a -> Bool)
+is f t = (== t) . f
+
+isNot :: Eq b => (a -> b) -> b -> (a -> Bool)
+isNot f t = (/= t) . f
+
 asHiveling :: Lens' Entity (Maybe Hiveling')
 asHiveling = lens getter setter
  where
@@ -214,6 +221,9 @@ startingState =
   sides        = (,) <$> [-20, 20] <*> [-20 .. 20]
   nutrition    = (,) <$> [-10 .. 10] <*> [-10, 10]
 
+sees :: Hiveling' -> Entity -> Bool
+sees h e = distance (e ^. base . position) (h ^. _1 . position) < 8
+
 doGameStep :: GameState -> GameState
 doGameStep state =
   let (hivelingWithDecision, gen) =
@@ -227,27 +237,29 @@ doGameStep state =
   takeDecision :: Hiveling' -> State StdGen (Hiveling', Decision)
   takeDecision hiveling = do
     g <- get
-    let (g', g'') = split g
-        center    = hiveling ^. _1 . position
-        isClose p = distance p center < 8
-        decision = hivelingMind $ HivelingMindInput
-          { _closeEntities   = state
-                               ^.. entities
-                               .   each
-                               .   filtered (isClose . (^. base . position))
-                               &   each
-                               %~  forHivelingMind center
-          , _currentHiveling = hiveling ^. _2
-          , _randomInput     = g''
-          }
+    let
+      (g', g'') = split g
+      decision  = hivelingMind $ HivelingMindInput
+        { _closeEntities   =
+          state
+          ^.. entities
+          .   each
+          .   filtered
+                ((^. base . identifier) `isNot` (hiveling ^. _1 . identifier))
+          .   filtered (hiveling `sees`)
+          &   each
+          %~  forHivelingMind hiveling
+        , _currentHiveling = hiveling ^. _2
+        , _randomInput     = g''
+        }
     put g'
     return (hiveling, decision)
-  forHivelingMind :: Position -> Entity -> Entity
-  forHivelingMind center e =
+  forHivelingMind :: Hiveling' -> Entity -> Entity
+  forHivelingMind hiveling e =
     e
       &  base
       .  position
-      %~ relativePosition center
+      %~ relativePosition (hiveling ^. _1 . position)
       &
       -- Hivelings don't know about ids
          base
@@ -275,7 +287,7 @@ applyDecision state (hiveling, Decision t direction) = case t of
         .  hasNutrition
         .~ True
         &  entities
-        %~ filter ((/= topEntityAtTarget) . Just)
+        %~ filter (Just `isNot` topEntityAtTarget)
     _                         -> state
   Drop   -> case topEntityAtTarget of
     Just (Entity _ HiveEntrance) -> if hiveling ^. _2 . hasNutrition
@@ -298,12 +310,12 @@ applyDecision state (hiveling, Decision t direction) = case t of
       $   state
       ^.. entities
       .   each
-      .   filtered ((== targetPos) . (^. base . position))
+      .   filtered ((^. base . position) `is` targetPos)
   currentEntity :: Traversal' GameState Entity
   currentEntity =
     entities
       . each
-      . filtered ((== hiveling ^. _1 . identifier) . (^. base . identifier))
+      . filtered ((^. base . identifier) `is` (hiveling ^. _1 . identifier))
   currentHivelingProps :: Traversal' GameState HivelingProps
   currentHivelingProps = currentEntity . hivelingProps . _Just
 
@@ -329,7 +341,7 @@ hivelingMind input
     if has
          ( closeEntities
          . each
-         . filtered ((== direction2Offset direction) . (^. base . position))
+         . filtered ((^. base . position) `is` direction2Offset direction)
          )
          input
       then randomWalk
@@ -369,7 +381,7 @@ direction2Offset d = case d of
   NorthWest -> (-1, -1)
 
 offset2Direction :: Position -> Maybe Direction
-offset2Direction p = find ((== p) . direction2Offset) [minBound .. maxBound]
+offset2Direction p = find (direction2Offset `is` p) [minBound .. maxBound]
 
 closestDirection :: Position -> Direction
 closestDirection (x, y) = fromJust $ offset2Direction (limit x, limit y)
@@ -400,7 +412,11 @@ main = do
     buildVty
     (Just chan)
     app
-    AppState { _gameState = startingState, _iteration = 0, .. }
+    AppState { _gameState  = startingState
+             , _iteration  = 0
+             , _hideUnseen = False
+             , ..
+             }
  where
   buildVty = do
     vty <- V.mkVty V.defaultConfig
@@ -443,6 +459,8 @@ handleEvent s (VtyEvent (V.EvKey (V.KChar '1') []       )) = setSpeed s 300
 handleEvent s (VtyEvent (V.EvKey (V.KChar '2') []       )) = setSpeed s 100
 handleEvent s (VtyEvent (V.EvKey (V.KChar '3') []       )) = setSpeed s 50
 handleEvent s (VtyEvent (V.EvKey (V.KChar '4') []       )) = setSpeed s 10
+handleEvent s (VtyEvent (V.EvKey (V.KChar 'v') [])) =
+  continue $ s & hideUnseen %~ not
 handleEvent s (MouseDown p V.BLeft _ _) =
   continue
     $  s
@@ -456,8 +474,8 @@ handleEvent s (AppEvent AdvanceGame) =
 handleEvent s _ = continue s
 
 -- Rendering
-drawGameState :: GameState -> [Widget Name]
-drawGameState g =
+drawGameState :: AppState -> [Widget Name]
+drawGameState s =
   [ hBox [ renderPosition (x, y) | x <- [-20 .. 20] ] | y <- [-20 .. 20] ]
  where
   renderPosition :: Position -> Widget Name
@@ -468,10 +486,15 @@ drawGameState g =
   pointsOfInterest =
     fromListWith
         (\old new -> maximumBy (comparing (^. base . zIndex)) [old, new])
-      $   g
-      ^.. entities
-      .   each
-      .   to (\e -> (e ^. base . position, e))
+      $   (\e -> (e ^. base . position, e))
+      <$> visibleEntities
+  visibleEntities :: [Entity]
+  visibleEntities = if s ^. hideUnseen
+    then
+      let hivelings = s ^.. gameState . entities . each . asHiveling . _Just
+          seenByAnyHiveling e = or $ (`sees` e) <$> hivelings
+      in  s ^.. gameState . entities . each . filtered seenByAnyHiveling
+    else s ^. gameState . entities
   render :: EntityDetails -> String
   render t = case t of
     Nutrition    -> "N"
@@ -492,7 +515,7 @@ drawUI s =
               "Score"
               [padLeftRight 10 . str . show $ s ^. gameState . score]
           ]
-      ++  drawGameState (s ^. gameState)
+      ++  drawGameState s
       ++  (highlightBox <$> highlights)
   ]
  where
