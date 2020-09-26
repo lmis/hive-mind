@@ -554,7 +554,7 @@ drawUI s =
           ^. gameState
           .  score
           )
-      <=> (C.hCenter (labeledBorder "Wold" (drawGameState s)) <+> C.hCenter
+      <=> (C.hCenter (labeledBorder "World" (drawGameState s)) <+> C.hCenter
             (labeledBorder "Selected" $ if null highlights
               then padLeftRight 10 $ str "Nothing selected"
               else vBox (highlightBox <$> highlights)
