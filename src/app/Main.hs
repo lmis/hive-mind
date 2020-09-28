@@ -460,7 +460,7 @@ advanceGame ref chan = forkIO $ forever $ do
     (True, delay) -> do
       threadDelay $ delay * 1000
       writeBChan chan AdvanceGame
-    _             -> return ()
+    _             -> threadDelay $ 100 * 1000
 
 
 setSpeed :: AppState -> Int -> EventM Name (Next AppState)
