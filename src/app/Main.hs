@@ -8,6 +8,15 @@ module Main
   )
 where
 
+import           System.Process                 ( runInteractiveCommand
+                                                , waitForProcess
+                                                )
+import           System.IO                      ( stderr
+                                                , hGetContents
+                                                , hPutStr
+                                                , hClose
+                                                )
+import           System.Exit                    ( ExitCode(..) )
 import           Text.Pretty.Simple             ( pShowNoColor )
 import           Data.Text.Lazy                 ( Text
                                                 , toStrict
@@ -422,24 +431,42 @@ path p@(x, y) = case offset2Direction p of
 -- App plumbing
 main :: IO ()
 main = do
-  -- channel to inject events into main loop
-  _running   <- newIORef (False, 100)
-  chan       <- newBChan 10
-  _          <- advanceGame _running chan
+  putStrLn "Building your solution code."
+  buildHandles@(_, bOut, bErr, bProc) <- runInteractiveCommand "ls -l --color"
+  putStrLn "Waiting ..."
+  bCode <- waitForProcess bProc
+  if bCode == ExitSuccess
+    then do
+      hGetContents bOut >>= putStr
+      hGetContents bErr >>= hPutStr stderr
+      closeAll buildHandles
+    else do
+      closeAll buildHandles
+      startGame
 
-  initialVty <- buildVty
-  void $ customMain
-    initialVty
-    buildVty
-    (Just chan)
-    app
-    AppState { _gameState  = startingState
-             , _iteration  = 0
-             , _hideUnseen = False
-             , ..
-             }
  where
-  buildVty = do
+  closeAll (hIn, hOut, hErr, _) = do
+    hClose hIn
+    hClose hOut
+    hClose hErr
+  startGame = do
+    -- channel to inject events into main loop
+    _running   <- newIORef (False, 100)
+    chan       <- newBChan 10
+    _          <- advanceGame _running chan
+
+    initialVty <- buildVty
+    void $ customMain
+      initialVty
+      buildVty
+      (Just chan)
+      app
+      AppState { _gameState  = startingState
+               , _iteration  = 0
+               , _hideUnseen = False
+               , ..
+               }
+  buildVty  = do
     vty <- V.mkVty V.defaultConfig
     -- Grab mouse
     liftIO $ V.setMode (V.outputIface vty) V.Mouse True
