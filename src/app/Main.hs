@@ -73,7 +73,7 @@ import           Brick.BChan                    ( BChan
                                                 )
 import           System.Random                  ( StdGen
                                                 , mkStdGen
-                                                , split
+                                                , next
                                                 , randomR
                                                 )
 import           Lens.Micro                     ( Lens'
@@ -106,19 +106,19 @@ data Direction = Center
                | South
                | SouthWest
                | West
-               | NorthWest deriving (Eq, Show, Ord, Enum, Bounded)
+               | NorthWest deriving (Eq, Show, Read, Ord, Enum, Bounded)
 
 data DecisionType = Move
                   | Pickup
-                  | Drop deriving (Eq, Show)
+                  | Drop deriving (Eq, Show, Read)
 
-data Decision = Decision DecisionType Direction deriving (Eq, Show)
+data Decision = Decision DecisionType Direction deriving (Eq, Show, Read)
 
 data HivelingProps = HivelingProps {
   _lastDecision :: !Decision
  ,_hasNutrition :: !Bool
  ,_spreadsPheromones :: !Bool
-} deriving (Eq, Show)
+} deriving (Eq, Show, Read)
 makeLenses ''HivelingProps
 
 data EntityBase = EntityBase {
@@ -126,28 +126,28 @@ data EntityBase = EntityBase {
  ,_position :: !Position
  ,_zIndex :: !Int
  ,_highlighted :: !Bool
-} deriving (Eq, Show)
+} deriving (Eq, Show, Read)
 makeLenses ''EntityBase
 
 data EntityDetails = Hiveling HivelingProps
                    | Nutrition
                    | HiveEntrance
                    | Pheromone
-                   | Obstacle deriving (Eq, Show)
+                   | Obstacle deriving (Eq, Show, Read)
 
 type Hiveling' = (EntityBase, HivelingProps)
 
 data Entity = Entity {
   _base :: !EntityBase
  ,_details :: !EntityDetails
-} deriving (Eq, Show)
+} deriving (Eq, Show, Read)
 makeLenses ''Entity
 
 data HivelingMindInput = HivelingMindInput {
   _closeEntities :: [Entity]
  ,_currentHiveling :: HivelingProps
- ,_randomInput :: StdGen
-} deriving (Show)
+ ,_randomSeed :: Int
+} deriving (Eq, Show, Read)
 makeLenses ''HivelingMindInput
 
 data GameState = GameState {
@@ -253,8 +253,8 @@ doGameStep state =
   takeDecision hiveling = do
     g <- get
     let
-      (g', g'') = split g
-      decision  = hivelingMind $ HivelingMindInput
+      (r, g')  = next g
+      decision = hivelingMind $ HivelingMindInput
         { _closeEntities   =
           state
           ^.. entities
@@ -265,7 +265,7 @@ doGameStep state =
           &   each
           %~  forHivelingMind hiveling
         , _currentHiveling = hiveling ^. _2
-        , _randomInput     = g''
+        , _randomSeed      = r
         }
     put g'
     return (hiveling, decision)
@@ -373,7 +373,7 @@ hivelingMind input
       $ let minDirection = minBound :: Direction
             maxDirection = maxBound :: Direction
             (r, _) = randomR (fromEnum minDirection, fromEnum maxDirection)
-                             (input ^. randomInput)
+                             (input ^. randomSeed . to mkStdGen)
         in  toEnum r
 
 -- Direction
