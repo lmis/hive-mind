@@ -1,6 +1,10 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Common where
 
+import           System.IO                      ( Handle
+                                                , hFlush
+                                                , hPrint
+                                                )
 import           GHC.Float                      ( int2Double )
 import           Data.List                      ( find )
 import           Data.Maybe                     ( fromJust )
@@ -132,3 +136,8 @@ path p@(x, y) = case offset2Direction p of
         remain   = (x - x', y - y')
     in  dir : path remain
 
+-- Handles
+hPrintFlush :: Show a => Handle -> a -> IO ()
+hPrintFlush h x = do
+  hPrint h x
+  hFlush h

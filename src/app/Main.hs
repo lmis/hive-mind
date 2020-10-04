@@ -9,6 +9,7 @@ module Main
   )
 where
 
+import           DemoMind                       ( runDemo )
 import           Common                         ( isNot
                                                 , is
                                                 , Entity(..)
@@ -28,19 +29,36 @@ import           Common                         ( isNot
                                                 , Hiveling'
                                                 , hivelingProps
                                                 , HivelingMindInput(..)
-                                                , closeEntities
-                                                , currentHiveling
-                                                , randomSeed
                                                 , Position
                                                 , Direction(..)
                                                 , go
-                                                , path
                                                 , distance
                                                 , relativePosition
-                                                , direction2Offset
                                                 , Decision(..)
                                                 , DecisionType(..)
+                                                , hPrintFlush
                                                 )
+import           System.Process                 ( ProcessHandle
+                                                , runInteractiveCommand
+                                                )
+import           System.IO                      ( Handle
+                                                , stderr
+                                                , hSetBinaryMode
+                                                , hPutStrLn
+                                                , hGetLine
+                                                , hWaitForInput
+                                                )
+import           System.Exit                    ( ExitCode(..)
+                                                , exitWith
+                                                , exitSuccess
+                                                )
+import           System.Console.GetOpt          ( OptDescr(..)
+                                                , ArgDescr(..)
+                                                , getOpt
+                                                , usageInfo
+                                                , ArgOrder(..)
+                                                )
+import           System.Environment             ( getArgs )
 import           Text.Pretty.Simple             ( pShowNoColor )
 import           Data.Text.Lazy                 ( Text
                                                 , toStrict
@@ -49,6 +67,7 @@ import           Data.IORef                     ( IORef
                                                 , readIORef
                                                 , modifyIORef
                                                 , newIORef
+                                                , writeIORef
                                                 )
 import           Safe.Foldable                  ( maximumByMay )
 import           Data.Ord                       ( comparing )
@@ -58,11 +77,6 @@ import           Data.List                      ( maximumBy
 import           Data.Map.Strict                ( Map
                                                 , (!?)
                                                 , fromListWith
-                                                )
-import           Control.Monad.Trans.State      ( State
-                                                , get
-                                                , put
-                                                , runState
                                                 )
 import           Control.Monad.IO.Class         ( liftIO )
 import           Control.Monad                  ( forever
@@ -104,18 +118,15 @@ import           Brick.BChan                    ( BChan
 import           System.Random                  ( StdGen
                                                 , mkStdGen
                                                 , next
-                                                , randomR
                                                 )
 import           Lens.Micro                     ( Traversal'
                                                 , (&)
-                                                , (^?)
                                                 , (^.)
                                                 , (^..)
                                                 , (%~)
                                                 , (.~)
                                                 , (+~)
                                                 , (-~)
-                                                , has
                                                 , each
                                                 , to
                                                 , filtered
@@ -128,16 +139,18 @@ import           Lens.Micro.Platform            ( makeLenses )
 
 data GameState = GameState {
   _entities :: [Entity]
- ,_nextId :: Int
+ ,_nextId :: !Int
  ,_score :: !Int
  ,_randomGen :: StdGen
 } deriving (Show)
 makeLenses ''GameState
 
 type Name = Position
+type InteractiveProcess = (Handle, Handle, Handle, ProcessHandle)
 data AppEvent = AdvanceGame deriving (Eq, Show, Ord)
 data AppState = AppState {
   _gameState :: !GameState
+ ,_hiveMindProcess :: !InteractiveProcess
  ,_running :: IORef (Bool, Int)
  ,_hideUnseen :: !Bool
  ,_iteration :: !Int
@@ -188,22 +201,24 @@ startingState =
 sees :: Hiveling' -> Position -> Bool
 sees h p = distance p (h ^. _1 . position) < 6
 
-doGameStep :: GameState -> GameState
-doGameStep state =
-  let (hivelingWithDecision, gen) =
-          runState
-        -- TODO: Shuffle
-                   (mapM takeDecision hivelings) (state ^. randomGen)
-  in  foldl applyDecision (state & randomGen .~ gen) hivelingWithDecision
+doGameStep :: InteractiveProcess -> GameState -> IO GameState
+doGameStep proc state = do
+  -- TODO: This is a hack. Don't use IORef for State...
+  stdGenRef             <- newIORef (state ^. randomGen)
+  -- TODO: Shuffle
+  hivelingsWithDecision <- mapM (takeDecision stdGenRef) hivelings
+  gen                   <- readIORef stdGenRef
+  return $ foldl applyDecision (state & randomGen .~ gen) hivelingsWithDecision
  where
   hivelings :: [Hiveling']
   hivelings = state ^.. entities . each . asHiveling . _Just
-  takeDecision :: Hiveling' -> State StdGen (Hiveling', Decision)
-  takeDecision hiveling = do
-    g <- get
-    let
-      (r, g')  = next g
-      decision = hivelingMind $ HivelingMindInput
+  takeDecision :: IORef StdGen -> Hiveling' -> IO (Hiveling', Decision)
+  takeDecision stdGenRef hiveling = do
+    g <- readIORef stdGenRef
+    let (r, g') = next g
+    decision <- getHiveMindDecision
+      proc
+      HivelingMindInput
         { _closeEntities   =
           state
           ^.. entities
@@ -216,7 +231,7 @@ doGameStep state =
         , _currentHiveling = hiveling ^. _2
         , _randomSeed      = r
         }
-    put g'
+    writeIORef stdGenRef g'
     return (hiveling, decision)
   forHivelingMind :: Hiveling' -> Entity -> Entity
   forHivelingMind hiveling e =
@@ -289,51 +304,74 @@ applyDecision state (hiveling, decision@(Decision t direction)) =
   currentHivelingProps = currentEntity . hivelingProps . _Just
 
 
--- Hive mind
-hivelingMind :: HivelingMindInput -> Decision
-hivelingMind input
-  | input ^. currentHiveling . hasNutrition = case
-      findClose (== HiveEntrance)
-    of
-      Just obj -> path (obj ^. base . position) `followOrDo` Drop
-      Nothing  -> randomWalk
-  | otherwise = case findClose (== Nutrition) of
-    Just obj -> path (obj ^. base . position) `followOrDo` Pickup
-    Nothing  -> randomWalk
- where
-  findClose :: (EntityDetails -> Bool) -> Maybe Entity
-  findClose t = input ^? closeEntities . each . filtered (t . (^. details))
-  followOrDo :: [Direction] -> DecisionType -> Decision
-  followOrDo (Center : p) t = p `followOrDo` t
-  followOrDo []           t = Decision t Center
-  followOrDo [direction]  t = Decision t direction
-  followOrDo (direction : _) _ =
-    if has
-         ( closeEntities
-         . each
-         . filtered ((^. base . position) `is` direction2Offset direction)
-         )
-         input
-      then randomWalk
-      else Decision Move direction
-  randomWalk :: Decision
-  randomWalk =
-    Decision Move
-      $ let minDirection = minBound :: Direction
-            maxDirection = maxBound :: Direction
-            (r, _) = randomR (fromEnum minDirection, fromEnum maxDirection)
-                             (input ^. randomSeed . to mkStdGen)
-        in  toEnum r
+getHiveMindDecision :: InteractiveProcess -> HivelingMindInput -> IO Decision
+getHiveMindDecision (hIn, hOut, _, _) input = do
+  hPrintFlush hIn input
+  ready <- hWaitForInput hOut 100
+  if ready
+    then do
+      output <- hGetLine hOut
+      return $ read output
+    else error "mind-command time-out"
+
 
 -- App plumbing
+data Flag = Help | MindCommand String | RunAsDemoMind deriving (Eq, Show)
+flags :: [OptDescr Flag]
+flags =
+  [ Option ['d']
+           ["demo-mind"]
+           (NoArg RunAsDemoMind)
+           "Run program as demo hiveling mind"
+  , Option
+    ['m']
+    ["mind-command"]
+    (ReqArg MindCommand "STR")
+    "Command to continiously read HivlingMindInput from stdin and write Decision to stdout"
+  , Option ['h'] ["help"] (NoArg Help) "Print this help message"
+  ]
+
 main :: IO ()
 main = do
-  -- channel to inject events into main loop
-  _running   <- newIORef (False, 100)
-  chan       <- newBChan 10
-  _          <- advanceGame _running chan
+  argv <- getArgs
+  case getOpt Permute flags argv of
+    (args, _, []    ) -> do
+      if Help `elem` args
+        then do
+          hPutStrLn stderr (usageInfo header flags)
+          exitSuccess
+        else if RunAsDemoMind `elem` args
+          then runDemo
+          else case findMindCommand args of
+            Just h -> runApp h args
+            _      -> failure ["Missing argument mind-command"]
+    (_   , _, errors) -> failure errors
+ where
+  findMindCommand :: [Flag] -> Maybe String
+  findMindCommand ((MindCommand h) : _ ) = Just h
+  findMindCommand (_               : xs) = findMindCommand xs
+  findMindCommand []                     = Nothing
+  header :: String
+  header = "Usage"
+  failure :: [String] -> IO ()
+  failure errors = do
+    hPutStrLn stderr (unlines $ errors ++ [usageInfo header flags])
+    exitWith (ExitFailure 1)
 
-  initialVty <- buildVty
+
+runApp :: String -> [Flag] -> IO ()
+runApp mindCommand _ = do
+  -- start hive mind command
+  _hiveMindProcess@(hIn, hOut, _, _) <- runInteractiveCommand mindCommand
+  _                                  <- hSetBinaryMode hIn False
+  _                                  <- hSetBinaryMode hOut False
+
+  -- channel to inject events into main loop
+  _running                           <- newIORef (False, 100)
+  chan                               <- newBChan 10
+  _                                  <- advanceGame _running chan
+
+  initialVty                         <- buildVty
   void $ customMain
     initialVty
     buildVty
@@ -396,9 +434,10 @@ handleEvent s (MouseDown p V.BLeft _ _) =
     .  each
     .  base
     %~ (\e -> e & highlighted .~ e ^. position . to (== p))
-handleEvent s (AppEvent AdvanceGame) =
-  continue $ s & iteration +~ 1 & gameState %~ doGameStep
-handleEvent s _ = continue s
+handleEvent s (AppEvent AdvanceGame) = do
+  nextState <- liftIO $ doGameStep (s ^. hiveMindProcess) (s ^. gameState)
+  continue $ s & iteration +~ 1 & gameState .~ nextState
+handleEvent s _                      = continue s
 
 -- Rendering
 drawGameState :: AppState -> Widget Name

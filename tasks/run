@@ -1,2 +1,3 @@
 top=$(nix-shell --run "git rev-parse --show-toplevel")
-nix-shell --run "(cd $top; runghc -isrc/lib src/app/Main.hs)"
+prog="runghc -isrc/lib src/app/Main.hs"
+nix-shell --run "(cd $top; $prog -m \"$prog -d\")"

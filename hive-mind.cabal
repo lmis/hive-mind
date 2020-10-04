@@ -5,16 +5,14 @@ build-type:          Simple
 
 library
   exposed-modules:
-    HelloWorld
+    DemoMind
+    Common
   hs-source-dirs:
     src/lib
   ghc-options: -Wall -O2 -threaded
   build-depends:       base
                       ,containers
-                      ,brick
-                      ,vty
                       ,safe
-                      ,pretty-simple
                       ,raw-strings-qq
                       ,text
                       ,random
@@ -35,6 +33,7 @@ executable hive-mind
                       ,vty
                       ,safe
                       ,pretty-simple
+                      ,process
                       ,raw-strings-qq
                       ,text
                       ,random
