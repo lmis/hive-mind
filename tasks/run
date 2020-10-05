@@ -1,3 +1,4 @@
 top=$(nix-shell --run "git rev-parse --show-toplevel")
 prog="runghc -isrc/lib src/app/Main.hs"
-nix-shell --run "(cd $top; $prog -m \"$prog -d\")"
+version="find $top -type f -printf \\\"%T+\\\n\\\" | sort -nr | head -n1"
+nix-shell --run "(cd $top; $prog -m \"$prog -d\" -v \"$version\")"

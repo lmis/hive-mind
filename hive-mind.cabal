@@ -13,6 +13,7 @@ library
   build-depends:       base
                       ,containers
                       ,safe
+                      ,process
                       ,raw-strings-qq
                       ,text
                       ,random

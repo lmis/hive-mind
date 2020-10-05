@@ -4,6 +4,10 @@ module Common where
 import           System.IO                      ( Handle
                                                 , hFlush
                                                 , hPrint
+                                                , hGetContents
+                                                )
+import           System.Process                 ( runInteractiveCommand
+                                                , waitForProcess
                                                 )
 import           GHC.Float                      ( int2Double )
 import           Data.List                      ( find )
@@ -141,3 +145,10 @@ hPrintFlush :: Show a => Handle -> a -> IO ()
 hPrintFlush h x = do
   hPrint h x
   hFlush h
+
+readCommand :: String -> IO String
+readCommand cmd = do
+  (_, hOut, _, hProc) <- runInteractiveCommand cmd
+  v                   <- hGetContents hOut
+  _                   <- waitForProcess hProc
+  return v

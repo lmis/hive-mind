@@ -37,9 +37,11 @@ import           Common                         ( isNot
                                                 , Decision(..)
                                                 , DecisionType(..)
                                                 , hPrintFlush
+                                                , readCommand
                                                 )
 import           System.Process                 ( ProcessHandle
                                                 , runInteractiveCommand
+                                                , cleanupProcess
                                                 )
 import           System.IO                      ( Handle
                                                 , stderr
@@ -71,7 +73,8 @@ import           Data.IORef                     ( IORef
                                                 )
 import           Safe.Foldable                  ( maximumByMay )
 import           Data.Ord                       ( comparing )
-import           Data.List                      ( maximumBy
+import           Data.List                      ( find
+                                                , maximumBy
                                                 , sortOn
                                                 )
 import           Data.Map.Strict                ( Map
@@ -146,11 +149,13 @@ data GameState = GameState {
 makeLenses ''GameState
 
 type Name = Position
-type InteractiveProcess = (Handle, Handle, Handle, ProcessHandle)
+type InteractiveCommand = (String, Handle, Handle, Handle, ProcessHandle)
 data AppEvent = AdvanceGame deriving (Eq, Show, Ord)
 data AppState = AppState {
   _gameState :: !GameState
- ,_hiveMindProcess :: !InteractiveProcess
+ ,_hiveMindProcess :: !InteractiveCommand
+ ,_mindVersion :: !String
+ ,_getMindVersion :: !String
  ,_running :: IORef (Bool, Int)
  ,_hideUnseen :: !Bool
  ,_iteration :: !Int
@@ -201,7 +206,7 @@ startingState =
 sees :: Hiveling' -> Position -> Bool
 sees h p = distance p (h ^. _1 . position) < 6
 
-doGameStep :: InteractiveProcess -> GameState -> IO GameState
+doGameStep :: InteractiveCommand -> GameState -> IO GameState
 doGameStep proc state = do
   -- TODO: This is a hack. Don't use IORef for State...
   stdGenRef             <- newIORef (state ^. randomGen)
@@ -304,10 +309,10 @@ applyDecision state (hiveling, decision@(Decision t direction)) =
   currentHivelingProps = currentEntity . hivelingProps . _Just
 
 
-getHiveMindDecision :: InteractiveProcess -> HivelingMindInput -> IO Decision
-getHiveMindDecision (hIn, hOut, _, _) input = do
+getHiveMindDecision :: InteractiveCommand -> HivelingMindInput -> IO Decision
+getHiveMindDecision (_, hIn, hOut, _, _) input = do
   hPrintFlush hIn input
-  ready <- hWaitForInput hOut 100
+  ready <- hWaitForInput hOut 1000
   if ready
     then do
       output <- hGetLine hOut
@@ -316,7 +321,7 @@ getHiveMindDecision (hIn, hOut, _, _) input = do
 
 
 -- App plumbing
-data Flag = Help | MindCommand String | RunAsDemoMind deriving (Eq, Show)
+data Flag = Help | MindCommand String | GetMindVersion String | RunAsDemoMind deriving (Eq, Show)
 flags :: [OptDescr Flag]
 flags =
   [ Option ['d']
@@ -326,8 +331,13 @@ flags =
   , Option
     ['m']
     ["mind-command"]
-    (ReqArg MindCommand "STR")
+    (ReqArg MindCommand "CMD")
     "Command to continiously read HivlingMindInput from stdin and write Decision to stdout"
+  , Option
+    ['v']
+    ["get-mind-version"]
+    (ReqArg GetMindVersion "CMD")
+    "Command to get version of `mind-command`. If changed, `mind-command` is restarted."
   , Option ['h'] ["help"] (NoArg Help) "Print this help message"
   ]
 
@@ -342,15 +352,22 @@ main = do
           exitSuccess
         else if RunAsDemoMind `elem` args
           then runDemo
-          else case findMindCommand args of
-            Just h -> runApp h args
-            _      -> failure ["Missing argument mind-command"]
+          else case (find isMindCommand args, find isGetMindVersion args) of
+            (Just (MindCommand r), Just (GetMindVersion g)) ->
+              runApp (r, g) args
+            (Nothing, Just (GetMindVersion _)) ->
+              failure ["Missing mind-command"]
+            (Just (MindCommand _), Nothing) ->
+              failure ["Missing get-mind-version"]
+            _ -> failure ["Missing mind-command and get-mind-version"]
     (_   , _, errors) -> failure errors
  where
-  findMindCommand :: [Flag] -> Maybe String
-  findMindCommand ((MindCommand h) : _ ) = Just h
-  findMindCommand (_               : xs) = findMindCommand xs
-  findMindCommand []                     = Nothing
+  isMindCommand :: Flag -> Bool
+  isMindCommand (MindCommand _) = True
+  isMindCommand _               = False
+  isGetMindVersion :: Flag -> Bool
+  isGetMindVersion (GetMindVersion _) = True
+  isGetMindVersion _                  = False
   header :: String
   header = "Usage"
   failure :: [String] -> IO ()
@@ -358,20 +375,34 @@ main = do
     hPutStrLn stderr (unlines $ errors ++ [usageInfo header flags])
     exitWith (ExitFailure 1)
 
+start :: String -> IO InteractiveCommand
+start command = do
+  (hIn, hOut, hErr, hProc) <- runInteractiveCommand command
+  _                        <- hSetBinaryMode hIn False
+  _                        <- hSetBinaryMode hOut False
+  return (command, hIn, hOut, hErr, hProc)
 
-runApp :: String -> [Flag] -> IO ()
-runApp mindCommand _ = do
-  -- start hive mind command
-  _hiveMindProcess@(hIn, hOut, _, _) <- runInteractiveCommand mindCommand
-  _                                  <- hSetBinaryMode hIn False
-  _                                  <- hSetBinaryMode hOut False
+kill :: InteractiveCommand -> IO ()
+kill (_, hIn, hOut, hErr, hProc) =
+  cleanupProcess (Just hIn, Just hOut, Just hErr, hProc)
+
+restart :: InteractiveCommand -> IO InteractiveCommand
+restart p = do
+  kill p
+  start $ p ^. _1
+
+
+runApp :: (String, String) -> [Flag] -> IO ()
+runApp (mindCommand, _getMindVersion) _ = do
+  _hiveMindProcess <- start mindCommand
+  _mindVersion     <- readCommand _getMindVersion
 
   -- channel to inject events into main loop
-  _running                           <- newIORef (False, 100)
-  chan                               <- newBChan 10
-  _                                  <- advanceGame _running chan
+  _running         <- newIORef (False, 100)
+  chan             <- newBChan 10
+  _                <- advanceGame _running chan
 
-  initialVty                         <- buildVty
+  initialVty       <- buildVty
   void $ customMain
     initialVty
     buildVty
@@ -435,8 +466,24 @@ handleEvent s (MouseDown p V.BLeft _ _) =
     .  base
     %~ (\e -> e & highlighted .~ e ^. position . to (== p))
 handleEvent s (AppEvent AdvanceGame) = do
-  nextState <- liftIO $ doGameStep (s ^. hiveMindProcess) (s ^. gameState)
-  continue $ s & iteration +~ 1 & gameState .~ nextState
+  currentVersion <- liftIO $ readCommand $ s ^. getMindVersion
+  if currentVersion == (s ^. mindVersion)
+    then do
+      nextState <- liftIO $ doGameStep (s ^. hiveMindProcess) (s ^. gameState)
+      continue $ s & iteration +~ 1 & gameState .~ nextState
+    else do
+      p <- liftIO $ restart $ s ^. hiveMindProcess
+      continue
+        $  s
+        &  hiveMindProcess
+        .~ p
+        &  mindVersion
+        .~ currentVersion
+        &  iteration
+        .~ 0
+        &  gameState
+        .~ startingState
+
 handleEvent s _                      = continue s
 
 -- Rendering
