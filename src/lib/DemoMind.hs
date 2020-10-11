@@ -40,9 +40,11 @@ import           System.IO                      ( stdout )
 
 
 runDemo :: IO ()
-runDemo = forever $ do
-  input <- getLine
-  void . hPrintFlush stdout . hivelingMind . read $ input
+runDemo = do
+  hPrintFlush stdout "Hello World"
+  forever $ do
+    input <- getLine
+    void . hPrintFlush stdout . hivelingMind . read $ input
 
 hivelingMind :: HivelingMindInput -> Decision
 hivelingMind input

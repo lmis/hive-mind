@@ -150,7 +150,7 @@ makeLenses ''GameState
 
 type Name = Position
 type InteractiveCommand = (String, Handle, Handle, Handle, ProcessHandle)
-data AppEvent = AdvanceGame deriving (Eq, Show, Ord)
+data AppEvent = AdvanceGame | CheckHotReload deriving (Eq, Show, Ord)
 data AppState = AppState {
   _gameState :: !GameState
  ,_hiveMindProcess :: !InteractiveCommand
@@ -312,7 +312,7 @@ applyDecision state (hiveling, decision@(Decision t direction)) =
 getHiveMindDecision :: InteractiveCommand -> HivelingMindInput -> IO Decision
 getHiveMindDecision (_, hIn, hOut, _, _) input = do
   hPrintFlush hIn input
-  ready <- hWaitForInput hOut 1000
+  ready <- hWaitForInput hOut 100
   if ready
     then do
       output <- hGetLine hOut
@@ -394,15 +394,18 @@ restart p = do
 
 runApp :: (String, String) -> [Flag] -> IO ()
 runApp (mindCommand, _getMindVersion) _ = do
-  _hiveMindProcess <- start mindCommand
-  _mindVersion     <- readCommand _getMindVersion
+  _hiveMindProcess@(_, _, hOut, _, _) <- start mindCommand
+  _mindVersion                        <- readCommand _getMindVersion
 
   -- channel to inject events into main loop
-  _running         <- newIORef (False, 100)
-  chan             <- newBChan 10
-  _                <- advanceGame _running chan
+  _running                            <- newIORef (False, 100)
+  chan                                <- newBChan 10
+  _                                   <- advanceGame _running chan
+  _                                   <- checkHotReloading chan
 
-  initialVty       <- buildVty
+  initialVty                          <- buildVty
+  hiveMindReady                       <- hWaitForInput hOut 3000
+  if hiveMindReady then void $ hGetLine hOut else error "mind-command time-out"
   void $ customMain
     initialVty
     buildVty
@@ -427,6 +430,11 @@ app = App { appDraw         = drawUI
           , appStartEvent   = return
           , appAttrMap      = const theMap
           }
+
+checkHotReloading :: BChan AppEvent -> IO ThreadId
+checkHotReloading chan = forkIO $ forever $ do
+  threadDelay 1000000
+  writeBChan chan CheckHotReload
 
 advanceGame :: IORef (Bool, Int) -> BChan AppEvent -> IO ThreadId
 advanceGame ref chan = forkIO $ forever $ do
@@ -465,25 +473,31 @@ handleEvent s (MouseDown p V.BLeft _ _) =
     .  each
     .  base
     %~ (\e -> e & highlighted .~ e ^. position . to (== p))
-handleEvent s (AppEvent AdvanceGame) = do
-  currentVersion <- liftIO $ readCommand $ s ^. getMindVersion
+handleEvent s (AppEvent CheckHotReload) = do
+  currentVersion <- liftIO . readCommand $ s ^. getMindVersion
   if currentVersion == (s ^. mindVersion)
-    then do
-      nextState <- liftIO $ doGameStep (s ^. hiveMindProcess) (s ^. gameState)
-      continue $ s & iteration +~ 1 & gameState .~ nextState
+    then continue s
     else do
-      p <- liftIO $ restart $ s ^. hiveMindProcess
-      continue
-        $  s
-        &  hiveMindProcess
-        .~ p
-        &  mindVersion
-        .~ currentVersion
-        &  iteration
-        .~ 0
-        &  gameState
-        .~ startingState
-
+      p <- liftIO restartMind
+      continue $ s { _gameState       = startingState
+                   , _hiveMindProcess = p
+                   , _mindVersion     = currentVersion
+                   , _iteration       = 0
+                   }
+ where
+  restartMind = do
+    runs <- readIORef (s ^. running)
+    modifyIORef (s ^. running) (_1 .~ False)
+    p@(_, _, hOut, _, _) <- restart $ s ^. hiveMindProcess
+    hiveMindReady        <- hWaitForInput hOut 3000
+    if hiveMindReady
+      then void $ hGetLine hOut
+      else error "mind-command time-out"
+    writeIORef (s ^. running) runs
+    return p
+handleEvent s (AppEvent AdvanceGame) = do
+  nextState <- liftIO $ doGameStep (s ^. hiveMindProcess) (s ^. gameState)
+  continue $ s & iteration +~ 1 & gameState .~ nextState
 handleEvent s _                      = continue s
 
 -- Rendering
