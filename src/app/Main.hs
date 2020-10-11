@@ -76,6 +76,7 @@ import           Data.Ord                       ( comparing )
 import           Data.List                      ( find
                                                 , maximumBy
                                                 , sortOn
+                                                , foldl'
                                                 )
 import           Data.Map.Strict                ( Map
                                                 , (!?)
@@ -216,12 +217,11 @@ sees h p = distance p (h ^. _1 . position) < 6
 
 doGameStep :: InteractiveCommand -> GameState -> IO GameState
 doGameStep proc state = do
-  -- TODO: This is a hack. Don't use IORef for State...
   stdGenRef             <- newIORef (state ^. randomGen)
   -- TODO: Shuffle
   hivelingsWithDecision <- mapM (takeDecision stdGenRef) hivelings
   gen                   <- readIORef stdGenRef
-  return $ foldl applyDecision (state & randomGen .~ gen) hivelingsWithDecision
+  return $ foldl' applyDecision (state & randomGen .~ gen) hivelingsWithDecision
  where
   hivelings :: [Hiveling']
   hivelings = state ^.. entities . each . asHiveling . _Just
@@ -470,6 +470,7 @@ setSpeed s delay = do
 handleEvent :: AppState
             -> BrickEvent Name AppEvent
             -> EventM Name (Next AppState)
+handleEvent s (VtyEvent (V.EvKey V.KEsc        []       )) = halt s
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = halt s
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'd') [V.MCtrl])) = halt s
 handleEvent s (VtyEvent (V.EvKey (V.KChar ' ') []       )) = do
@@ -488,7 +489,7 @@ handleEvent s (MouseDown p V.BLeft _ _) =
     .  entities
     .  each
     .  base
-    %~ (\e -> e & highlighted .~ e ^. position . to (== p))
+    %~ (\e -> e & highlighted .~ (e ^. position == p))
 handleEvent s (AppEvent CheckHotReload) = do
   currentVersion <- liftIO . readCommand $ s ^. getMindVersionCommand
   if currentVersion == (s ^. mindVersion)
@@ -526,10 +527,11 @@ drawGameState state =
   pointsOfInterest =
     fromListWith
         (\old new -> maximumBy (comparing (^. base . zIndex)) [old, new])
-      $   (\e -> (e ^. base . position, e))
-      <$> state
-      ^.  gameState
+      $   state
+      ^.. gameState
       .   entities
+      .   each
+      .   to (\e -> (e ^. base . position, e))
   highlights :: [Position]
   highlights =
     state
@@ -542,9 +544,9 @@ drawGameState state =
   hivelings :: [Hiveling']
   hivelings = state ^.. gameState . entities . each . asHiveling . _Just
   noHivelingSees :: Position -> Bool
-  noHivelingSees p = and $ not . (`sees` p) <$> hivelings
+  noHivelingSees p = not $ any (`sees` p) hivelings
   noHighlightClose :: Position -> Bool
-  noHighlightClose p = and $ (> 2.5) . distance p <$> highlights
+  noHighlightClose p = all ((> 2.5) . distance p) highlights
   obscureInvisible :: Position -> String -> String
   obscureInvisible p s
     | state ^. hideUnseen && noHighlightClose p && noHivelingSees p = "??"
