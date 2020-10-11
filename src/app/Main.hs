@@ -90,7 +90,6 @@ import           Control.Concurrent             ( ThreadId
                                                 , forkIO
                                                 )
 import           Brick                          ( App(..)
-                                                , AttrMap
                                                 , BrickEvent(..)
                                                 , EventM
                                                 , Next
@@ -164,7 +163,7 @@ data AppState = AppState {
   _gameState :: !GameState
  ,_hiveMindProcess :: !InteractiveCommand
  ,_mindVersion :: !String
- ,_getMindVersion :: !String
+ ,_getMindVersionCommand :: !String
  ,_running :: IORef (Bool, Int)
  ,_hideUnseen :: !Bool
  ,_iteration :: !Int
@@ -199,18 +198,18 @@ startingState =
                                       }
            ,
            )
-       <$> hivelings
+       <$> hivelingPositions
        )
     ++ ((HiveEntrance, ) <$> entrances)
     ++ ((Obstacle, ) <$> topAndBottom)
     ++ ((Obstacle, ) <$> sides)
     ++ ((Nutrition, ) <$> nutrition)
  where
-  hivelings    = [(1, 4), (-3, 12), (0, -6), (2, 2)]
-  entrances    = (,) <$> [-5, 5] <*> [-5, 5]
-  topAndBottom = (,) <$> [-9 .. 9] <*> [-20, -19, 19, 20]
-  sides        = (,) <$> [-10, 10] <*> [-20 .. 20]
-  nutrition    = (,) <$> [-5 .. 5] <*> [-15, -14, 0, 14, 15]
+  hivelingPositions = [(1, 4), (-3, 12), (0, -6), (2, 2)]
+  entrances         = (,) <$> [-5, 5] <*> [-5, 5]
+  topAndBottom      = (,) <$> [-9 .. 9] <*> [-20, -19, 19, 20]
+  sides             = (,) <$> [-10, 10] <*> [-20 .. 20]
+  nutrition         = (,) <$> [-5 .. 5] <*> [-15, -14, 0, 14, 15]
 
 sees :: Hiveling' -> Position -> Bool
 sees h p = distance p (h ^. _1 . position) < 6
@@ -337,11 +336,10 @@ flags =
            ["demo-mind"]
            (NoArg RunAsDemoMind)
            "Run program as demo hiveling mind"
-  , Option
-    ['m']
-    ["mind-command"]
-    (ReqArg MindCommand "CMD")
-    "Command to continiously read HivlingMindInput from stdin and write Decision to stdout"
+  , Option ['m'] ["mind-command"] (ReqArg MindCommand "CMD") $ unlines
+    [ "Command to process HivelingMindInput from stdin and writing Decision to stdout."
+    , "Must print one line to stdout on startup and then continuously read from stdin and write to stdout."
+    ]
   , Option
     ['v']
     ["get-mind-version"]
@@ -410,9 +408,9 @@ restart p = do
   start (p ^. startupTimeout) $ p ^. command
 
 runApp :: (String, String) -> [Flag] -> IO ()
-runApp (mindCommand, getMindVersion') _ = do
+runApp (mindCommand, getMindVersionCommand') _ = do
   hiveMindProcess' <- start 3000 mindCommand
-  mindVersion'     <- readCommand getMindVersion'
+  mindVersion'     <- readCommand getMindVersionCommand'
 
   -- channel to inject events into main loop
   running'         <- newIORef (False, 100)
@@ -426,13 +424,13 @@ runApp (mindCommand, getMindVersion') _ = do
     buildVty
     (Just chan)
     app
-    AppState { _gameState       = startingState
-             , _iteration       = 0
-             , _hideUnseen      = False
-             , _hiveMindProcess = hiveMindProcess'
-             , _mindVersion     = mindVersion'
-             , _getMindVersion  = getMindVersion'
-             , _running         = running'
+    AppState { _gameState             = startingState
+             , _iteration             = 0
+             , _hideUnseen            = False
+             , _hiveMindProcess       = hiveMindProcess'
+             , _mindVersion           = mindVersion'
+             , _getMindVersionCommand = getMindVersionCommand'
+             , _running               = running'
              }
  where
   buildVty = do
@@ -446,7 +444,7 @@ app = App { appDraw         = drawUI
           , appChooseCursor = neverShowCursor
           , appHandleEvent  = handleEvent
           , appStartEvent   = return
-          , appAttrMap      = const theMap
+          , appAttrMap      = const $ attrMap V.defAttr []
           }
 
 checkHotReloading :: BChan AppEvent -> IO ThreadId
@@ -492,7 +490,7 @@ handleEvent s (MouseDown p V.BLeft _ _) =
     .  base
     %~ (\e -> e & highlighted .~ e ^. position . to (== p))
 handleEvent s (AppEvent CheckHotReload) = do
-  currentVersion <- liftIO . readCommand $ s ^. getMindVersion
+  currentVersion <- liftIO . readCommand $ s ^. getMindVersionCommand
   if currentVersion == (s ^. mindVersion)
     then continue s
     else do
@@ -600,8 +598,6 @@ drawUI s =
   info (Hiveling d) = pShowNoColor d
   info d            = pShowNoColor d
 
-theMap :: AttrMap
-theMap = attrMap V.defAttr []
 
 labeledBorder :: String -> Widget a -> Widget a
 labeledBorder label =

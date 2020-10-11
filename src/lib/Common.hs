@@ -99,7 +99,7 @@ hivelingProps = lens getter setter
 
 -- Direction
 norm :: Position -> Double
-norm (x, y) = sqrt . int2Double $ x ^ (2 :: Int) + y ^ (2 :: Int)
+norm (x, y) = sqrt . int2Double $ x * x + y * y
 
 relativePosition :: Position -> Position -> Position
 relativePosition (ox, oy) (x, y) = (x - ox, y - oy)
@@ -132,12 +132,11 @@ closestDirection (x, y) = fromJust $ offset2Direction (limit x, limit y)
   limit n = min 1 $ max (-1) n
 
 path :: Position -> [Direction]
-path p@(x, y) = case offset2Direction p of
+path p = case offset2Direction p of
   Just d -> [d]
   _ ->
-    let dir      = closestDirection p
-        (x', y') = direction2Offset dir
-        remain   = (x - x', y - y')
+    let dir    = closestDirection p
+        remain = relativePosition (direction2Offset dir) p
     in  dir : path remain
 
 -- Handles
