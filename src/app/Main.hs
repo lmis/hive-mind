@@ -148,8 +148,17 @@ data GameState = GameState {
 } deriving (Show)
 makeLenses ''GameState
 
+data InteractiveCommand = InteractiveCommand {
+  _command :: !String,
+  _startupTimeout :: !Int,
+  _hIn :: Handle,
+  _hOut :: Handle,
+  _hErr :: Handle,
+  _hProc :: ProcessHandle
+}
+makeLenses ''InteractiveCommand
+
 type Name = Position
-type InteractiveCommand = (String, Handle, Handle, Handle, ProcessHandle)
 data AppEvent = AdvanceGame | CheckHotReload deriving (Eq, Show, Ord)
 data AppState = AppState {
   _gameState :: !GameState
@@ -310,14 +319,14 @@ applyDecision state (hiveling, decision@(Decision t direction)) =
 
 
 getHiveMindDecision :: InteractiveCommand -> HivelingMindInput -> IO Decision
-getHiveMindDecision (_, hIn, hOut, _, _) input = do
-  hPrintFlush hIn input
-  ready <- hWaitForInput hOut 100
+getHiveMindDecision cmd input = do
+  hPrintFlush (cmd ^. hIn) input
+  ready <- hWaitForInput (cmd ^. hOut) 100
   if ready
     then do
-      output <- hGetLine hOut
+      output <- hGetLine (cmd ^. hOut)
       return $ read output
-    else error "mind-command time-out"
+    else error "mind-command decision time-out"
 
 
 -- App plumbing
@@ -375,46 +384,55 @@ main = do
     hPutStrLn stderr (unlines $ errors ++ [usageInfo header flags])
     exitWith (ExitFailure 1)
 
-start :: String -> IO InteractiveCommand
-start command = do
-  (hIn, hOut, hErr, hProc) <- runInteractiveCommand command
-  _                        <- hSetBinaryMode hIn False
-  _                        <- hSetBinaryMode hOut False
-  return (command, hIn, hOut, hErr, hProc)
+start :: Int -> String -> IO InteractiveCommand
+start startupTimeout' command' = do
+  (hIn', hOut', hErr', hProc') <- runInteractiveCommand command'
+  _                            <- hSetBinaryMode hIn' False
+  _                            <- hSetBinaryMode hOut' False
+  ready                        <- hWaitForInput hOut' startupTimeout'
+  if ready then void $ hGetLine hOut' else error $ command' ++ " start time-out"
+
+  return InteractiveCommand { _command        = command'
+                            , _startupTimeout = startupTimeout'
+                            , _hIn            = hIn'
+                            , _hOut           = hOut'
+                            , _hErr           = hErr'
+                            , _hProc          = hProc'
+                            }
 
 kill :: InteractiveCommand -> IO ()
-kill (_, hIn, hOut, hErr, hProc) =
-  cleanupProcess (Just hIn, Just hOut, Just hErr, hProc)
+kill cmd = cleanupProcess
+  (Just $ cmd ^. hIn, Just $ cmd ^. hOut, Just $ cmd ^. hErr, cmd ^. hProc)
 
 restart :: InteractiveCommand -> IO InteractiveCommand
 restart p = do
   kill p
-  start $ p ^. _1
-
+  start (p ^. startupTimeout) $ p ^. command
 
 runApp :: (String, String) -> [Flag] -> IO ()
-runApp (mindCommand, _getMindVersion) _ = do
-  _hiveMindProcess@(_, _, hOut, _, _) <- start mindCommand
-  _mindVersion                        <- readCommand _getMindVersion
+runApp (mindCommand, getMindVersion') _ = do
+  hiveMindProcess' <- start 3000 mindCommand
+  mindVersion'     <- readCommand getMindVersion'
 
   -- channel to inject events into main loop
-  _running                            <- newIORef (False, 100)
-  chan                                <- newBChan 10
-  _                                   <- advanceGame _running chan
-  _                                   <- checkHotReloading chan
+  running'         <- newIORef (False, 100)
+  chan             <- newBChan 10
+  _                <- advanceGame running' chan
+  _                <- checkHotReloading chan
 
-  initialVty                          <- buildVty
-  hiveMindReady                       <- hWaitForInput hOut 3000
-  if hiveMindReady then void $ hGetLine hOut else error "mind-command time-out"
+  initialVty       <- buildVty
   void $ customMain
     initialVty
     buildVty
     (Just chan)
     app
-    AppState { _gameState  = startingState
-             , _iteration  = 0
-             , _hideUnseen = False
-             , ..
+    AppState { _gameState       = startingState
+             , _iteration       = 0
+             , _hideUnseen      = False
+             , _hiveMindProcess = hiveMindProcess'
+             , _mindVersion     = mindVersion'
+             , _getMindVersion  = getMindVersion'
+             , _running         = running'
              }
  where
   buildVty = do
@@ -488,11 +506,7 @@ handleEvent s (AppEvent CheckHotReload) = do
   restartMind = do
     runs <- readIORef (s ^. running)
     modifyIORef (s ^. running) (_1 .~ False)
-    p@(_, _, hOut, _, _) <- restart $ s ^. hiveMindProcess
-    hiveMindReady        <- hWaitForInput hOut 3000
-    if hiveMindReady
-      then void $ hGetLine hOut
-      else error "mind-command time-out"
+    p <- restart $ s ^. hiveMindProcess
     writeIORef (s ^. running) runs
     return p
 handleEvent s (AppEvent AdvanceGame) = do
