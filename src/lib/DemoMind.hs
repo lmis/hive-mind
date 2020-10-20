@@ -5,7 +5,7 @@ module DemoMind
 where
 
 import           Common                         ( is
-                                                , Entity(..)
+                                                , Entity
                                                 , base
                                                 , details
                                                 , position
@@ -48,12 +48,12 @@ runDemo = do
 
 hivelingMind :: HivelingMindInput -> Decision
 hivelingMind input
-  | input ^. currentHiveling . hasNutrition = case
-      findClose (== HiveEntrance)
-    of
-      Just obj -> path (obj ^. base . position) `followOrDo` Drop
-      Nothing  -> randomWalk
-  | otherwise = case findClose (== Nutrition) of
+  | input ^. currentHiveling . details . hasNutrition
+  = case findClose (== HiveEntrance) of
+    Just obj -> path (obj ^. base . position) `followOrDo` Drop
+    Nothing  -> randomWalk
+  | otherwise
+  = case findClose (== Nutrition) of
     Just obj -> path (obj ^. base . position) `followOrDo` Pickup
     Nothing  -> randomWalk
  where

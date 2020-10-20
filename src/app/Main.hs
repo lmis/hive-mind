@@ -12,7 +12,8 @@ where
 import           DemoMind                       ( runDemo )
 import           Common                         ( isNot
                                                 , is
-                                                , Entity(..)
+                                                , Entity'(..)
+                                                , Entity
                                                 , asHiveling
                                                 , base
                                                 , details
@@ -22,12 +23,11 @@ import           Common                         ( isNot
                                                 , zIndex
                                                 , highlighted
                                                 , EntityDetails(..)
-                                                , HivelingProps(..)
+                                                , HivelingDetails(..)
                                                 , lastDecision
                                                 , hasNutrition
                                                 , spreadsPheromones
-                                                , Hiveling'
-                                                , hivelingProps
+                                                , Hiveling
                                                 , HivelingMindInput(..)
                                                 , Position
                                                 , Direction(..)
@@ -176,7 +176,7 @@ addEntity :: Int -> EntityDetails -> Position -> GameState -> GameState
 addEntity _zIndex _details _position state =
   state & nextId +~ 1 & entities %~ (new :)
  where
-  new = Entity
+  new = Entity'
     { _base = EntityBase { _identifier  = state ^. nextId
                          , _highlighted = False
                          , ..
@@ -193,10 +193,10 @@ startingState =
                 , _score     = 0
                 , _randomGen = mkStdGen 42
                 }
-    $  (   ( Hiveling $ HivelingProps { _lastDecision = Decision Move Center
-                                      , _hasNutrition = False
-                                      , _spreadsPheromones = False
-                                      }
+    $  (   ( Hiveling' $ HivelingDetails { _lastDecision = Decision Move Center
+                                         , _hasNutrition = False
+                                         , _spreadsPheromones = False
+                                         }
            ,
            )
        <$> hivelingPositions
@@ -212,8 +212,8 @@ startingState =
   sides             = (,) <$> [-10, 10] <*> [-20 .. 20]
   nutrition         = (,) <$> [-5 .. 5] <*> [-15, -14, 0, 14, 15]
 
-sees :: Hiveling' -> Position -> Bool
-sees h p = distance p (h ^. _1 . position) < 6
+sees :: Hiveling -> Position -> Bool
+sees h p = distance p (h ^. base . position) < 6
 
 doGameStep :: InteractiveCommand -> GameState -> IO GameState
 doGameStep proc state = do
@@ -223,9 +223,9 @@ doGameStep proc state = do
   gen                   <- readIORef stdGenRef
   return $ foldl' applyDecision (state & randomGen .~ gen) hivelingsWithDecision
  where
-  hivelings :: [Hiveling']
+  hivelings :: [Hiveling]
   hivelings = state ^.. entities . each . asHiveling . _Just
-  takeDecision :: IORef StdGen -> Hiveling' -> IO (Hiveling', Decision)
+  takeDecision :: IORef StdGen -> Hiveling -> IO (Hiveling, Decision)
   takeDecision stdGenRef hiveling = do
     g <- readIORef stdGenRef
     let (r, g') = next g
@@ -237,69 +237,74 @@ doGameStep proc state = do
           ^.. entities
           .   each
           .   filtered
-                ((^. base . identifier) `isNot` (hiveling ^. _1 . identifier))
+                ((^. base . identifier) `isNot` (hiveling ^. base . identifier))
           .   filtered ((hiveling `sees`) . (^. base . position))
           &   each
           %~  forHivelingMind hiveling
-        , _currentHiveling = hiveling ^. _2
+        , _currentHiveling = hiveling
         , _randomSeed      = r
         }
     writeIORef stdGenRef g'
     return (hiveling, decision)
-  forHivelingMind :: Hiveling' -> Entity -> Entity
+  forHivelingMind :: Hiveling -> Entity -> Entity
   forHivelingMind hiveling e =
     e
       &  base
       .  position
-      %~ relativePosition (hiveling ^. _1 . position)
+      %~ relativePosition (hiveling ^. base . position)
       &
       -- Hivelings don't know about ids
          base
       .  identifier
       .~ -1
 
-applyDecision :: GameState -> (Hiveling', Decision) -> GameState
-applyDecision state (hiveling, decision@(Decision t direction)) =
-  storeDecision $ case t of
-    Move   -> case topEntityAtTarget of
-      Just (Entity _ Obstacle    ) -> state & score -~ 1
-      Just (Entity _ (Hiveling _)) -> state
-      Just (Entity b' _) ->
-        state
-          &  currentEntity
-          .  base
-          %~ (position .~ targetPos)
-          .  (zIndex .~ (b' ^. zIndex) + 1)
-      Nothing ->
-        state & currentEntity . base %~ (position .~ targetPos) . (zIndex .~ 0)
-    Pickup -> case topEntityAtTarget of
-      Just (Entity _ Nutrition) -> if hiveling ^. _2 . hasNutrition
-        then state
-        else
+applyDecision :: GameState -> (Hiveling, Decision) -> GameState
+applyDecision state (h, decision@(Decision t direction)) =
+  (case t of
+      Move   -> case topEntityAtTarget of
+        Just (Entity' _ Obstacle     ) -> state & score -~ 1
+        Just (Entity' _ (Hiveling' _)) -> state
+        Just (Entity' b' _) ->
           state
-          &  currentHivelingProps
-          .  hasNutrition
-          .~ True
-          &  entities
-          %~ filter (Just `isNot` topEntityAtTarget)
-      _                         -> state
-    Drop   -> case topEntityAtTarget of
-      Just (Entity _ HiveEntrance) -> if hiveling ^. _2 . hasNutrition
-        then state & currentHivelingProps . hasNutrition .~ False & score +~ 10
-        else state
-      Just _                       -> state
-      Nothing ->
-        state
-          &  score
-          -~ 100 -- No food waste!
-          &  currentHivelingProps
-          .  hasNutrition
-          .~ False
+            &  hiveling
+            .  base
+            %~ (position .~ targetPos)
+            .  (zIndex .~ (b' ^. zIndex) + 1)
+        Nothing ->
+          state & hiveling . base %~ (position .~ targetPos) . (zIndex .~ 0)
+      Pickup -> case topEntityAtTarget of
+        Just (Entity' _ Nutrition) -> if h ^. details . hasNutrition
+          then state
+          else
+            state
+            &  hiveling
+            .  details
+            .  hasNutrition
+            .~ True
+            &  entities
+            %~ filter (Just `isNot` topEntityAtTarget)
+        _                          -> state
+      Drop   -> case topEntityAtTarget of
+        Just (Entity' _ HiveEntrance) -> if h ^. details . hasNutrition
+          then state & hiveling . details . hasNutrition .~ False & score +~ 10
+          else state
+        Just _                        -> state
+        Nothing ->
+          state
+            &  score
+            -~ 100 -- No food waste!
+            &  hiveling
+            .  details
+            .  hasNutrition
+            .~ False
+    )
+    &  hiveling
+    .  details
+    .  lastDecision
+    .~ decision
  where
-  storeDecision :: GameState -> GameState
-  storeDecision = currentHivelingProps . lastDecision .~ decision
   targetPos :: Position
-  targetPos = (hiveling ^. _1 . position) `go` direction
+  targetPos = (h ^. base . position) `go` direction
   topEntityAtTarget :: Maybe Entity
   topEntityAtTarget =
     maximumByMay (comparing (^. base . zIndex))
@@ -307,14 +312,14 @@ applyDecision state (hiveling, decision@(Decision t direction)) =
       ^.. entities
       .   each
       .   filtered ((^. base . position) `is` targetPos)
-      . filtered ((^. base . identifier) `isNot` (hiveling ^. _1 . identifier))
-  currentEntity :: Traversal' GameState Entity
-  currentEntity =
+      .   filtered ((^. base . identifier) `isNot` (h ^. base . identifier))
+  hiveling :: Traversal' GameState Hiveling
+  hiveling =
     entities
       . each
-      . filtered ((^. base . identifier) `is` (hiveling ^. _1 . identifier))
-  currentHivelingProps :: Traversal' GameState HivelingProps
-  currentHivelingProps = currentEntity . hivelingProps . _Just
+      . filtered ((^. base . identifier) `is` (h ^. base . identifier))
+      . asHiveling
+      . _Just
 
 
 getHiveMindDecision :: InteractiveCommand -> HivelingMindInput -> IO Decision
@@ -541,7 +546,7 @@ drawGameState state =
       .   base
       .   filtered (^. highlighted)
       .   position
-  hivelings :: [Hiveling']
+  hivelings :: [Hiveling]
   hivelings = state ^.. gameState . entities . each . asHiveling . _Just
   noHivelingSees :: Position -> Bool
   noHivelingSees p = not $ any (`sees` p) hivelings
@@ -557,10 +562,10 @@ drawGameState state =
     HiveEntrance -> "{}"
     Pheromone    -> ".~"
     Obstacle     -> "XX"
-    Hiveling h | h ^. hasNutrition && h ^. spreadsPheromones -> "U*"
-               | h ^. hasNutrition      -> "J*"
-               | h ^. spreadsPheromones -> "U="
-               | otherwise              -> "J="
+    Hiveling' h | h ^. hasNutrition && h ^. spreadsPheromones -> "U*"
+                | h ^. hasNutrition      -> "J*"
+                | h ^. spreadsPheromones -> "U="
+                | otherwise              -> "J="
 
 drawUI :: AppState -> [Widget Name]
 drawUI s =
@@ -597,8 +602,8 @@ drawUI s =
       $  e
       ^. details
   info :: EntityDetails -> Text
-  info (Hiveling d) = pShowNoColor d
-  info d            = pShowNoColor d
+  info (Hiveling' d) = pShowNoColor d
+  info d             = pShowNoColor d
 
 
 labeledBorder :: String -> Widget a -> Widget a

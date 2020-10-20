@@ -34,12 +34,7 @@ data DecisionType = Move
 
 data Decision = Decision DecisionType Direction deriving (Eq, Show, Read)
 
-data HivelingProps = HivelingProps {
-  _lastDecision :: !Decision
- ,_hasNutrition :: !Bool
- ,_spreadsPheromones :: !Bool
-} deriving (Eq, Show, Read)
-makeLenses ''HivelingProps
+
 
 data EntityBase = EntityBase {
   _identifier :: !Int
@@ -49,23 +44,32 @@ data EntityBase = EntityBase {
 } deriving (Eq, Show, Read)
 makeLenses ''EntityBase
 
-data EntityDetails = Hiveling HivelingProps
+data Entity' a = Entity' {
+  _base :: !EntityBase
+ ,_details :: !a
+} deriving (Eq, Show, Read)
+makeLenses ''Entity'
+
+data HivelingDetails = HivelingDetails {
+  _lastDecision :: !Decision
+ ,_hasNutrition :: !Bool
+ ,_spreadsPheromones :: !Bool
+} deriving (Eq, Show, Read)
+makeLenses ''HivelingDetails
+
+data EntityDetails = Hiveling' HivelingDetails
                    | Nutrition
                    | HiveEntrance
                    | Pheromone
                    | Obstacle deriving (Eq, Show, Read)
 
-type Hiveling' = (EntityBase, HivelingProps)
 
-data Entity = Entity {
-  _base :: !EntityBase
- ,_details :: !EntityDetails
-} deriving (Eq, Show, Read)
-makeLenses ''Entity
+type Entity = Entity' EntityDetails
+type Hiveling = Entity' HivelingDetails
 
 data HivelingMindInput = HivelingMindInput {
   _closeEntities :: [Entity]
- ,_currentHiveling :: HivelingProps
+ ,_currentHiveling :: Hiveling
  ,_randomSeed :: Int
 } deriving (Eq, Show, Read)
 makeLenses ''HivelingMindInput
@@ -77,25 +81,17 @@ is f t = (== t) . f
 isNot :: Eq b => (a -> b) -> b -> (a -> Bool)
 isNot f t = (/= t) . f
 
-asHiveling :: Lens' Entity (Maybe Hiveling')
+asHiveling :: Lens' Entity (Maybe Hiveling)
 asHiveling = lens getter setter
  where
-  getter :: Entity -> Maybe Hiveling'
-  getter (Entity b (Hiveling d)) = Just (b, d)
-  getter _                       = Nothing
-  setter :: Entity -> Maybe Hiveling' -> Entity
-  setter (Entity _ (Hiveling _)) (Just (b, d)) = Entity b (Hiveling d)
-  setter e                       _             = e
+  getter :: Entity -> Maybe Hiveling
+  getter (Entity' b (Hiveling' d)) = Just $ Entity' b d
+  getter _                         = Nothing
+  setter :: Entity -> Maybe Hiveling -> Entity
+  setter (Entity' _ (Hiveling' _)) (Just (Entity' b d)) =
+    Entity' b $ Hiveling' d
+  setter e _ = e
 
-hivelingProps :: Lens' Entity (Maybe HivelingProps)
-hivelingProps = lens getter setter
- where
-  getter :: Entity -> Maybe HivelingProps
-  getter (Entity _ (Hiveling d)) = Just d
-  getter _                       = Nothing
-  setter :: Entity -> Maybe HivelingProps -> Entity
-  setter (Entity b (Hiveling _)) (Just d) = Entity b (Hiveling d)
-  setter e                       _        = e
 
 -- Direction
 norm :: Position -> Double
