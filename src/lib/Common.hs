@@ -12,10 +12,12 @@ import           System.Process                 ( runInteractiveCommand
 import           GHC.Float                      ( int2Double )
 import           Data.List                      ( find )
 import           Data.Maybe                     ( fromJust )
-import           Lens.Micro                     ( Lens'
-                                                , lens
+import           Control.Lens                   ( Prism'
+                                                , (^.)
+                                                , prism
+                                                , makeLenses
+                                                , makePrisms
                                                 )
-import           Lens.Micro.Platform            ( makeLenses )
 
 type Position = (Int, Int)
 data Direction = Center
@@ -62,6 +64,7 @@ data EntityDetails = Hiveling' HivelingDetails
                    | HiveEntrance
                    | Pheromone
                    | Obstacle deriving (Eq, Show, Read)
+makePrisms ''EntityDetails
 
 
 type Entity = Entity' EntityDetails
@@ -81,16 +84,15 @@ is f t = (== t) . f
 isNot :: Eq b => (a -> b) -> b -> (a -> Bool)
 isNot f t = (/= t) . f
 
-asHiveling :: Lens' Entity (Maybe Hiveling)
-asHiveling = lens getter setter
+asHiveling :: Prism' Entity Hiveling
+asHiveling = prism collapse refine
  where
-  getter :: Entity -> Maybe Hiveling
-  getter (Entity' b (Hiveling' d)) = Just $ Entity' b d
-  getter _                         = Nothing
-  setter :: Entity -> Maybe Hiveling -> Entity
-  setter (Entity' _ (Hiveling' _)) (Just (Entity' b d)) =
-    Entity' b $ Hiveling' d
-  setter e _ = e
+  collapse :: Hiveling -> Entity
+  collapse h =
+    Entity' { _base = h ^. base, _details = Hiveling' $ h ^. details }
+  refine :: Entity -> Either Entity Hiveling
+  refine (Entity' b (Hiveling' d)) = Right $ Entity' b d
+  refine e                         = Left e
 
 
 -- Direction

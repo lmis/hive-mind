@@ -122,7 +122,7 @@ import           System.Random                  ( StdGen
                                                 , mkStdGen
                                                 , next
                                                 )
-import           Lens.Micro                     ( Traversal'
+import           Control.Lens                   ( Traversal'
                                                 , (&)
                                                 , (^.)
                                                 , (^..)
@@ -133,11 +133,10 @@ import           Lens.Micro                     ( Traversal'
                                                 , each
                                                 , to
                                                 , filtered
-                                                , _Just
                                                 , _1
                                                 , _2
+                                                , makeLenses
                                                 )
-import           Lens.Micro.Platform            ( makeLenses )
 
 
 data GameState = GameState {
@@ -224,7 +223,7 @@ doGameStep proc state = do
   return $ foldl' applyDecision (state & randomGen .~ gen) hivelingsWithDecision
  where
   hivelings :: [Hiveling]
-  hivelings = state ^.. entities . each . asHiveling . _Just
+  hivelings = state ^.. entities . each . asHiveling
   takeDecision :: IORef StdGen -> Hiveling -> IO (Hiveling, Decision)
   takeDecision stdGenRef hiveling = do
     g <- readIORef stdGenRef
@@ -319,7 +318,6 @@ applyDecision state (h, decision@(Decision t direction)) =
       . each
       . filtered ((^. base . identifier) `is` (h ^. base . identifier))
       . asHiveling
-      . _Just
 
 
 getHiveMindDecision :: InteractiveCommand -> HivelingMindInput -> IO Decision
@@ -547,7 +545,7 @@ drawGameState state =
       .   filtered (^. highlighted)
       .   position
   hivelings :: [Hiveling]
-  hivelings = state ^.. gameState . entities . each . asHiveling . _Just
+  hivelings = state ^.. gameState . entities . each . asHiveling
   noHivelingSees :: Position -> Bool
   noHivelingSees p = not $ any (`sees` p) hivelings
   noHighlightClose :: Position -> Bool
