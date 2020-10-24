@@ -28,7 +28,7 @@ import           Control.Monad                  ( forever
 import           System.Random                  ( mkStdGen
                                                 , randomR
                                                 )
-import           Lens.Micro                     ( (^?)
+import           Control.Lens                   ( (^?)
                                                 , (^.)
                                                 , has
                                                 , each
