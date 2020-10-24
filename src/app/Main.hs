@@ -70,7 +70,9 @@ import           Data.IORef                     ( IORef
                                                 , writeIORef
                                                 )
 import           Safe.Foldable                  ( maximumByMay )
-import           Data.Ord                       ( comparing )
+import           Data.Ord                       ( Down(..)
+                                                , comparing
+                                                )
 import           Data.List                      ( find
                                                 , maximumBy
                                                 , sortOn
@@ -607,7 +609,7 @@ drawUI s =
  where
   highlights :: [Entity']
   highlights = sortOn
-    (^. base . zIndex . to negate)
+    (^. base . zIndex . to Down)
     (s ^.. gameState . entities . each . filtered (^. base . highlighted))
   highlightBox :: Entity' -> Widget Name
   highlightBox e =
