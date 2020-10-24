@@ -78,12 +78,6 @@ data HivelingMindInput = HivelingMindInput {
 makeLenses ''HivelingMindInput
 
 -- Traversals & Utils
-is :: Eq b => (a -> b) -> b -> (a -> Bool)
-is f t = (== t) . f
-
-isNot :: Eq b => (a -> b) -> b -> (a -> Bool)
-isNot f t = (/= t) . f
-
 asHiveling :: Prism' Entity Hiveling
 asHiveling = prism collapse refine
  where
@@ -121,7 +115,7 @@ direction2Offset d = case d of
   NorthWest -> (-1, -1)
 
 offset2Direction :: Position -> Maybe Direction
-offset2Direction p = find (direction2Offset `is` p) [minBound .. maxBound]
+offset2Direction p = find ((== p) . direction2Offset) [minBound .. maxBound]
 
 closestDirection :: Position -> Direction
 closestDirection (x, y) = fromJust $ offset2Direction (limit x, limit y)

@@ -10,9 +10,7 @@ module Main
 where
 
 import           DemoMind                       ( runDemo )
-import           Common                         ( isNot
-                                                , is
-                                                , Entity'(..)
+import           Common                         ( Entity'(..)
                                                 , Entity
                                                 , asHiveling
                                                 , base
@@ -122,10 +120,11 @@ import           System.Random                  ( StdGen
                                                 , mkStdGen
                                                 , next
                                                 )
-import           Control.Lens                   ( Traversal'
+import           Control.Lens                   ( ASetter'
                                                 , (&)
                                                 , (^.)
                                                 , (^..)
+                                                , (^?)
                                                 , (%~)
                                                 , (.~)
                                                 , (+~)
@@ -133,6 +132,7 @@ import           Control.Lens                   ( Traversal'
                                                 , each
                                                 , to
                                                 , filtered
+                                                , _Just
                                                 , _1
                                                 , _2
                                                 , makeLenses
@@ -179,7 +179,7 @@ addEntity details' position' state = state & nextId +~ 1 & entities %~ (new :)
       $   state
       ^.. entities
       .   each
-      .   filtered ((== position') . (^. base . position))
+      .   filtered (\e -> (e ^. base . position) == position')
   new = Entity'
     { _base    = EntityBase { _identifier  = state ^. nextId
                             , _highlighted = False
@@ -240,8 +240,10 @@ doGameStep proc state = do
           ^.. entities
           .   each
           .   filtered
-                ((^. base . identifier) `isNot` (hiveling ^. base . identifier))
-          .   filtered ((hiveling `sees`) . (^. base . position))
+                (\e ->
+                  (e ^. base . identifier) /= (hiveling ^. base . identifier)
+                )
+          .   filtered (\e -> hiveling `sees` (e ^. base . position))
           &   each
           %~  forHivelingMind hiveling
         , _currentHiveling = hiveling
@@ -279,13 +281,14 @@ applyDecision state (h, decision@(Decision t direction)) =
         Just (Entity' _ Nutrition) -> if h ^. details . hasNutrition
           then state
           else
-            state
-            &  hiveling
-            .  details
-            .  hasNutrition
-            .~ True
-            &  entities
-            %~ filter (Just `isNot` topEntityAtTarget)
+            state & hiveling . details . hasNutrition .~ True & entities %~ filter
+              (\e ->
+                Just (e ^. base . identifier)
+                  /= topEntityAtTarget
+                  ^? _Just
+                  .  base
+                  .  identifier
+              )
         _                          -> state
       Drop   -> case topEntityAtTarget of
         Just (Entity' _ HiveEntrance) -> if h ^. details . hasNutrition
@@ -314,13 +317,15 @@ applyDecision state (h, decision@(Decision t direction)) =
       $   state
       ^.. entities
       .   each
-      .   filtered ((^. base . position) `is` targetPos)
-      .   filtered ((^. base . identifier) `isNot` (h ^. base . identifier))
-  hiveling :: Traversal' GameState Hiveling
+      .   filtered (\e -> (e ^. base . position) == targetPos)
+      .   filtered (\e -> (e ^. base . identifier) /= (h ^. base . identifier))
+  -- This could be a Traversal' but since you can get the hiveling through `h`,
+  -- this should stay an ASetter'
+  hiveling :: ASetter' GameState Hiveling
   hiveling =
     entities
       . each
-      . filtered ((^. base . identifier) `is` (h ^. base . identifier))
+      . filtered (\e -> (e ^. base . identifier) == (h ^. base . identifier))
       . asHiveling
 
 

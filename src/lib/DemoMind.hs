@@ -4,8 +4,7 @@ module DemoMind
   )
 where
 
-import           Common                         ( is
-                                                , Entity
+import           Common                         ( Entity
                                                 , base
                                                 , details
                                                 , position
@@ -67,7 +66,7 @@ hivelingMind input
     if has
          ( closeEntities
          . each
-         . filtered ((^. base . position) `is` direction2Offset direction)
+         . filtered (^. base . position . to (== direction2Offset direction))
          )
          input
       then randomWalk
