@@ -133,8 +133,6 @@ import           Control.Lens                   ( ASetter'
                                                 , to
                                                 , filtered
                                                 , _Just
-                                                , _1
-                                                , _2
                                                 , makeLenses
                                                 )
 
@@ -151,14 +149,20 @@ data GameState = GameState {
 makeLenses ''GameState
 
 data InteractiveCommand = InteractiveCommand {
-  _command :: !String,
-  _startupTimeout :: !Int,
-  _hIn :: Handle,
-  _hOut :: Handle,
-  _hErr :: Handle,
-  _hProc :: ProcessHandle
+  _command :: !String
+ ,_startupTimeout :: !Int
+ ,_hIn :: Handle
+ ,_hOut :: Handle
+ ,_hErr :: Handle
+ ,_hProc :: ProcessHandle
 }
 makeLenses ''InteractiveCommand
+
+data SpeedSettings = SpeedSettings {
+  _running :: !Bool
+ ,_delay :: !Int
+}
+makeLenses ''SpeedSettings
 
 type Name = Position
 data AppEvent = AdvanceGame | CheckHotReload deriving (Eq, Show, Ord)
@@ -167,7 +171,7 @@ data AppState = AppState {
  ,_hiveMindProcess :: !InteractiveCommand
  ,_mindVersion :: !String
  ,_getMindVersionCommand :: !String
- ,_running :: IORef (Bool, Int)
+ ,_speedSettings :: IORef SpeedSettings
  ,_hideUnseen :: !Bool
  ,_iteration :: !Int
 }
@@ -431,9 +435,9 @@ runApp (mindCommand, getMindVersionCommand') _ = do
   mindVersion'     <- readCommand getMindVersionCommand'
 
   -- channel to inject events into main loop
-  running'         <- newIORef (False, 100)
+  speedSettings' <- newIORef $ SpeedSettings { _running = False, _delay = 100 }
   chan             <- newBChan 10
-  _                <- advanceGame running' chan
+  _                <- advanceGame speedSettings' chan
   _                <- checkHotReloading chan
 
   initialVty       <- buildVty
@@ -448,7 +452,7 @@ runApp (mindCommand, getMindVersionCommand') _ = do
              , _hiveMindProcess       = hiveMindProcess'
              , _mindVersion           = mindVersion'
              , _getMindVersionCommand = getMindVersionCommand'
-             , _running               = running'
+             , _speedSettings         = speedSettings'
              }
  where
   buildVty = do
@@ -470,19 +474,19 @@ checkHotReloading chan = forkIO $ forever $ do
   threadDelay 1000000
   writeBChan chan CheckHotReload
 
-advanceGame :: IORef (Bool, Int) -> BChan AppEvent -> IO ThreadId
+advanceGame :: IORef SpeedSettings -> BChan AppEvent -> IO ThreadId
 advanceGame ref chan = forkIO $ forever $ do
-  runs <- readIORef ref
-  case runs of
-    (True, delay) -> do
-      threadDelay $ delay * 1000
+  speedSettings' <- readIORef ref
+  if speedSettings' ^. running
+    then do
+      threadDelay $ speedSettings' ^. delay . to (* 1000)
       writeBChan chan AdvanceGame
-    _             -> threadDelay $ 100 * 1000
+    else threadDelay $ 100 * 1000
 
 
 setSpeed :: AppState -> Int -> EventM Name (Next AppState)
-setSpeed s delay = do
-  _ <- liftIO $ modifyIORef (s ^. running) (_2 .~ delay)
+setSpeed s delay' = do
+  _ <- liftIO $ modifyIORef (s ^. speedSettings) (delay .~ delay')
   continue s
 
 handleEvent :: AppState
@@ -492,7 +496,7 @@ handleEvent s (VtyEvent (V.EvKey V.KEsc        []       )) = halt s
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = halt s
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'd') [V.MCtrl])) = halt s
 handleEvent s (VtyEvent (V.EvKey (V.KChar ' ') []       )) = do
-  _ <- liftIO $ modifyIORef (s ^. running) (_1 %~ not)
+  _ <- liftIO $ modifyIORef (s ^. speedSettings) (running %~ not)
   continue s
 handleEvent s (VtyEvent (V.EvKey (V.KChar '1') []       )) = setSpeed s 300
 handleEvent s (VtyEvent (V.EvKey (V.KChar '2') []       )) = setSpeed s 100
@@ -521,10 +525,10 @@ handleEvent s (AppEvent CheckHotReload) = do
                    }
  where
   restartMind = do
-    runs <- readIORef (s ^. running)
-    modifyIORef (s ^. running) (_1 .~ False)
+    speedSettings' <- readIORef (s ^. speedSettings)
+    modifyIORef (s ^. speedSettings) (running .~ False)
     p <- restart $ s ^. hiveMindProcess
-    writeIORef (s ^. running) runs
+    writeIORef (s ^. speedSettings) speedSettings'
     return p
 handleEvent s (AppEvent AdvanceGame) = do
   nextState <- liftIO $ doGameStep (s ^. hiveMindProcess) (s ^. gameState)
