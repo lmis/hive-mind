@@ -4,7 +4,7 @@ module DemoMind
   )
 where
 
-import           Common                         ( Entity
+import           Common                         ( Entity'
                                                 , base
                                                 , details
                                                 , position
@@ -56,7 +56,7 @@ hivelingMind input
     Just obj -> path (obj ^. base . position) `followOrDo` Pickup
     Nothing  -> randomWalk
  where
-  findClose :: (EntityDetails -> Bool) -> Maybe Entity
+  findClose :: (EntityDetails -> Bool) -> Maybe Entity'
   findClose t = input ^? closeEntities . each . filtered (t . (^. details))
   followOrDo :: [Direction] -> DecisionType -> Decision
   followOrDo (Center : p) t = p `followOrDo` t

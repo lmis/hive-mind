@@ -46,11 +46,11 @@ data EntityBase = EntityBase {
 } deriving (Eq, Show, Read)
 makeLenses ''EntityBase
 
-data Entity' a = Entity' {
+data Entity a = Entity {
   _base :: !EntityBase
  ,_details :: !a
 } deriving (Eq, Show, Read)
-makeLenses ''Entity'
+makeLenses ''Entity
 
 data HivelingDetails = HivelingDetails {
   _lastDecision :: !Decision
@@ -59,7 +59,7 @@ data HivelingDetails = HivelingDetails {
 } deriving (Eq, Show, Read)
 makeLenses ''HivelingDetails
 
-data EntityDetails = Hiveling' HivelingDetails
+data EntityDetails = Hiveling HivelingDetails
                    | Nutrition
                    | HiveEntrance
                    | Pheromone
@@ -67,26 +67,25 @@ data EntityDetails = Hiveling' HivelingDetails
 makePrisms ''EntityDetails
 
 
-type Entity = Entity' EntityDetails
-type Hiveling = Entity' HivelingDetails
+type Entity' = Entity EntityDetails
+type Hiveling' = Entity HivelingDetails
 
 data HivelingMindInput = HivelingMindInput {
-  _closeEntities :: [Entity]
- ,_currentHiveling :: Hiveling
+  _closeEntities :: [Entity']
+ ,_currentHiveling :: Hiveling'
  ,_randomSeed :: Int
 } deriving (Eq, Show, Read)
 makeLenses ''HivelingMindInput
 
 -- Traversals & Utils
-asHiveling :: Prism' Entity Hiveling
+asHiveling :: Prism' Entity' Hiveling'
 asHiveling = prism collapse refine
  where
-  collapse :: Hiveling -> Entity
-  collapse h =
-    Entity' { _base = h ^. base, _details = Hiveling' $ h ^. details }
-  refine :: Entity -> Either Entity Hiveling
-  refine (Entity' b (Hiveling' d)) = Right $ Entity' b d
-  refine e                         = Left e
+  collapse :: Hiveling' -> Entity'
+  collapse h = Entity { _base = h ^. base, _details = Hiveling $ h ^. details }
+  refine :: Entity' -> Either Entity' Hiveling'
+  refine (Entity b (Hiveling d)) = Right $ Entity b d
+  refine e                       = Left e
 
 
 -- Direction
