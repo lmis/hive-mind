@@ -46,9 +46,9 @@ data EntityBase = EntityBase {
 } deriving (Eq, Show, Read)
 makeLenses ''EntityBase
 
-data Entity a = Entity {
-  _base :: !EntityBase
- ,_details :: !a
+data Entity b d = Entity {
+  _base :: !b
+ ,_details :: !d
 } deriving (Eq, Show, Read)
 makeLenses ''Entity
 
@@ -66,24 +66,15 @@ data EntityDetails = Hiveling HivelingDetails
                    | Obstacle deriving (Eq, Show, Read)
 makePrisms ''EntityDetails
 
-
-type Entity' = Entity EntityDetails
-type Hiveling' = Entity HivelingDetails
-
-data HivelingMindInput = HivelingMindInput {
-  _closeEntities :: [Entity']
- ,_currentHiveling :: Hiveling'
- ,_randomSeed :: Int
-} deriving (Eq, Show, Read)
-makeLenses ''HivelingMindInput
-
+type Entity' b = Entity b EntityDetails
+type Hiveling' b = Entity b HivelingDetails
 -- Traversals & Utils
-asHiveling :: Prism' Entity' Hiveling'
+asHiveling :: Prism' (Entity' b) (Hiveling' b)
 asHiveling = prism collapse refine
  where
-  collapse :: Hiveling' -> Entity'
+  collapse :: Hiveling' b -> Entity' b
   collapse h = Entity { _base = h ^. base, _details = Hiveling $ h ^. details }
-  refine :: Entity' -> Either Entity' Hiveling'
+  refine :: Entity' b -> Either (Entity' b) (Hiveling' b)
   refine (Entity b (Hiveling d)) = Right $ Entity b d
   refine e                       = Left e
 

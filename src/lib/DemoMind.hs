@@ -4,22 +4,23 @@ module DemoMind
   )
 where
 
-import           Common                         ( Entity'
-                                                , base
+import           Common                         ( base
                                                 , details
-                                                , position
                                                 , EntityDetails(..)
                                                 , hasNutrition
-                                                , HivelingMindInput(..)
-                                                , closeEntities
-                                                , currentHiveling
-                                                , randomSeed
                                                 , Direction(..)
                                                 , path
                                                 , direction2Offset
                                                 , Decision(..)
                                                 , DecisionType(..)
                                                 , hPrintFlush
+                                                )
+import           Client                         ( Entity'
+                                                , position
+                                                , Input(..)
+                                                , closeEntities
+                                                , currentHiveling
+                                                , randomSeed
                                                 )
 import           Control.Monad                  ( forever
                                                 , void
@@ -45,7 +46,7 @@ runDemo = do
     input <- getLine
     void . hPrintFlush stdout . hivelingMind . read $ input
 
-hivelingMind :: HivelingMindInput -> Decision
+hivelingMind :: Input -> Decision
 hivelingMind input
   | input ^. currentHiveling . details . hasNutrition
   = case findClose (== HiveEntrance) of

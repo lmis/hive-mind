@@ -11,7 +11,6 @@ where
 
 import           DemoMind                       ( runDemo )
 import           Common                         ( Entity(..)
-                                                , Entity'
                                                 , asHiveling
                                                 , base
                                                 , details
@@ -25,8 +24,6 @@ import           Common                         ( Entity(..)
                                                 , lastDecision
                                                 , hasNutrition
                                                 , spreadsPheromones
-                                                , Hiveling'
-                                                , HivelingMindInput(..)
                                                 , Position
                                                 , Direction(..)
                                                 , go
@@ -36,6 +33,9 @@ import           Common                         ( Entity(..)
                                                 , DecisionType(..)
                                                 , hPrintFlush
                                                 , readCommand
+                                                )
+import qualified Client                         ( Input(..)
+                                                , EntityBase(..)
                                                 )
 import           System.Process                 ( ProcessHandle
                                                 , runInteractiveCommand
@@ -139,6 +139,9 @@ import           Control.Lens                   ( ASetter'
                                                 )
 
 
+type Entity' = Entity EntityBase EntityDetails
+type Hiveling' = Entity EntityBase HivelingDetails
+
 data GameState = GameState {
   _entities :: [Entity']
  ,_nextId :: !Int
@@ -216,7 +219,7 @@ startingState =
   sides                  = (,) <$> [-10, 10] <*> [-20 .. 20]
   nutrition              = (,) <$> [-5 .. 5] <*> [-15, -14, 0, 14, 15]
 
-sees :: Entity d -> Position -> Bool
+sees :: Entity EntityBase d -> Position -> Bool
 sees h p = distance p (h ^. base . position) < 6
 
 doGameStep :: InteractiveCommand -> GameState -> IO GameState
@@ -235,7 +238,7 @@ doGameStep proc state = do
     let (r, g') = next g
     decision <- getHiveMindDecision
       proc
-      HivelingMindInput
+      Client.Input
         { _closeEntities   =
           state
           ^.. entities
@@ -247,22 +250,23 @@ doGameStep proc state = do
           .   filtered (\e -> hiveling `sees` (e ^. base . position))
           &   each
           %~  forHivelingMind hiveling
-        , _currentHiveling = hiveling
+        , _currentHiveling = withClientEntityBase hiveling
         , _randomSeed      = r
         }
     writeIORef stdGenRef g'
     return (hiveling, decision)
-  forHivelingMind :: Hiveling' -> Entity d -> Entity d
+  withClientEntityBase :: Entity EntityBase d -> Entity Client.EntityBase d
+  withClientEntityBase Entity { _base = EntityBase {..}, ..} =
+    Entity { _base = Client.EntityBase { .. }, .. }
+  forHivelingMind :: Hiveling'
+                  -> Entity EntityBase d
+                  -> Entity Client.EntityBase d
   forHivelingMind hiveling e =
-    e
+    withClientEntityBase
+      $  e
       &  base
       .  position
       %~ relativePosition (hiveling ^. base . position)
-      &
-      -- Hivelings don't know about ids
-         base
-      .  identifier
-      .~ -1
 
 applyDecision :: GameState -> (Hiveling', Decision) -> GameState
 applyDecision state (h, decision@(Decision t direction)) =
@@ -331,7 +335,7 @@ applyDecision state (h, decision@(Decision t direction)) =
       . asHiveling
 
 
-getHiveMindDecision :: InteractiveCommand -> HivelingMindInput -> IO Decision
+getHiveMindDecision :: InteractiveCommand -> Client.Input -> IO Decision
 getHiveMindDecision cmd input = do
   hPrintFlush (cmd ^. hIn) input
   ready <- hWaitForInput (cmd ^. hOut) 100
