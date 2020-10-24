@@ -171,8 +171,9 @@ data AppState = AppState {
 makeLenses ''AppState
 
 -- Game init & advancing
-addEntity :: EntityDetails -> Position -> GameState -> GameState
-addEntity details' position' state = state & nextId +~ 1 & entities %~ (new :)
+addEntity :: (EntityDetails, Position) -> GameState -> GameState
+addEntity (details', position') state =
+  state & nextId +~ 1 & entities %~ (new :)
  where
   zIndex' =
     length
@@ -192,7 +193,7 @@ addEntity details' position' state = state & nextId +~ 1 & entities %~ (new :)
 startingState :: GameState
 startingState =
   foldr
-      (uncurry addEntity)
+      addEntity
       GameState { _entities  = []
                 , _nextId    = 0
                 , _score     = 0
@@ -295,14 +296,15 @@ applyDecision state (h, decision@(Decision t direction)) =
           then state & hiveling . details . hasNutrition .~ False & score +~ 10
           else state
         Just _                        -> state
-        Nothing ->
-          state
-            &  score
-            -~ 100 -- No food waste!
+        Nothing                       -> if h ^. details . hasNutrition
+          then
+            state
             &  hiveling
             .  details
             .  hasNutrition
             .~ False
+            &  addEntity (Nutrition, targetPos)
+          else state
     )
     &  hiveling
     .  details
