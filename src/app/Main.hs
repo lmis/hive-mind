@@ -171,47 +171,51 @@ data AppState = AppState {
 makeLenses ''AppState
 
 -- Game init & advancing
-addEntity :: Int -> EntityDetails -> Position -> GameState -> GameState
-addEntity _zIndex _details _position state =
-  state & nextId +~ 1 & entities %~ (new :)
+addEntity :: EntityDetails -> Position -> GameState -> GameState
+addEntity details' position' state = state & nextId +~ 1 & entities %~ (new :)
  where
+  zIndex' =
+    length
+      $   state
+      ^.. entities
+      .   each
+      .   filtered ((== position') . (^. base . position))
   new = Entity'
-    { _base = EntityBase { _identifier  = state ^. nextId
-                         , _highlighted = False
-                         , ..
-                         }
-    , ..
+    { _base    = EntityBase { _identifier  = state ^. nextId
+                            , _highlighted = False
+                            , _zIndex      = zIndex'
+                            , _position    = position'
+                            }
+    , _details = details'
     }
 
 startingState :: GameState
 startingState =
   foldr
-      (uncurry $ addEntity 0)
+      (uncurry addEntity)
       GameState { _entities  = []
                 , _nextId    = 0
                 , _score     = 0
                 , _randomGen = mkStdGen 42
                 }
-    $  (   ( Hiveling' $ HivelingDetails { _lastDecision = Decision Move Center
-                                         , _hasNutrition = False
-                                         , _spreadsPheromones = False
-                                         }
-           ,
-           )
-       <$> hivelingPositions
-       )
+    $  ((Hiveling' defaultHivelingDetails, ) <$> hivelingPositions)
     ++ ((HiveEntrance, ) <$> entrances)
     ++ ((Obstacle, ) <$> topAndBottom)
     ++ ((Obstacle, ) <$> sides)
     ++ ((Nutrition, ) <$> nutrition)
  where
-  hivelingPositions = [(1, 4), (-3, 12), (0, -6), (2, 2)]
-  entrances         = (,) <$> [-5, 5] <*> [-5, 5]
-  topAndBottom      = (,) <$> [-9 .. 9] <*> [-20, -19, 19, 20]
-  sides             = (,) <$> [-10, 10] <*> [-20 .. 20]
-  nutrition         = (,) <$> [-5 .. 5] <*> [-15, -14, 0, 14, 15]
+  defaultHivelingDetails = HivelingDetails
+    { _lastDecision      = Decision Move Center
+    , _hasNutrition      = False
+    , _spreadsPheromones = False
+    }
+  hivelingPositions      = [(1, 4), (-3, 12), (0, -6), (2, 2)]
+  entrances              = (,) <$> [-5, 5] <*> [-5, 5]
+  topAndBottom           = (,) <$> [-9 .. 9] <*> [-20, -19, 19, 20]
+  sides                  = (,) <$> [-10, 10] <*> [-20 .. 20]
+  nutrition              = (,) <$> [-5 .. 5] <*> [-15, -14, 0, 14, 15]
 
-sees :: Hiveling -> Position -> Bool
+sees :: Entity' d -> Position -> Bool
 sees h p = distance p (h ^. base . position) < 6
 
 doGameStep :: InteractiveCommand -> GameState -> IO GameState
@@ -245,7 +249,7 @@ doGameStep proc state = do
         }
     writeIORef stdGenRef g'
     return (hiveling, decision)
-  forHivelingMind :: Hiveling -> Entity -> Entity
+  forHivelingMind :: Hiveling -> Entity' d -> Entity' d
   forHivelingMind hiveling e =
     e
       &  base
