@@ -651,5 +651,5 @@ drawUI s = [C.hCenter . labeledBorder "Hive Mind" $ page]
 
 labeledBorder :: String -> Widget a -> Widget a
 labeledBorder label =
-  withBorderStyle BS.unicodeBold
+  withBorderStyle BS.unicode
     . B.borderWithLabel (padLeftRight 1 $ str label)
