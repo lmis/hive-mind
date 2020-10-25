@@ -108,10 +108,12 @@ offset2Direction :: Position -> Maybe Direction
 offset2Direction p = find ((== p) . direction2Offset) [minBound .. maxBound]
 
 closestDirection :: Position -> Direction
-closestDirection (x, y) = fromJust $ offset2Direction (limit x, limit y)
+closestDirection (x, y) = fromJust $ offset2Direction (project x, project y)
  where
-  limit :: Int -> Int
-  limit n = min 1 $ max (-1) n
+  project :: Int -> Int
+  project s = round $ s `divInt` max (abs x) (abs y)
+  divInt :: Int -> Int -> Double
+  divInt a b = int2Double a / int2Double b
 
 path :: Position -> [Direction]
 path p = case offset2Direction p of
