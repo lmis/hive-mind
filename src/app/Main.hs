@@ -175,6 +175,7 @@ data AppState = AppState {
  ,_getMindVersionCommand :: !String
  ,_speedSettings :: IORef SpeedSettings
  ,_hideUnseen :: !Bool
+ ,_showHelp :: !Bool
  ,_iteration :: !Int
 }
 makeLenses ''AppState
@@ -451,6 +452,7 @@ runApp (mindCommand, getMindVersionCommand') _ = do
     AppState { _gameState             = startingState
              , _iteration             = 0
              , _hideUnseen            = False
+             , _showHelp              = False
              , _hiveMindProcess       = hiveMindProcess'
              , _mindVersion           = mindVersion'
              , _getMindVersionCommand = getMindVersionCommand'
@@ -497,13 +499,15 @@ handleEvent :: AppState
 handleEvent s (VtyEvent (V.EvKey V.KEsc        []       )) = halt s
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = halt s
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'd') [V.MCtrl])) = halt s
-handleEvent s (VtyEvent (V.EvKey (V.KChar ' ') []       )) = do
+handleEvent s (VtyEvent (V.EvKey (V.KChar '?') [])) =
+  continue $ s & showHelp %~ not
+handleEvent s (VtyEvent (V.EvKey (V.KChar ' ') [])) = do
   _ <- liftIO $ modifyIORef (s ^. speedSettings) (running %~ not)
   continue s
-handleEvent s (VtyEvent (V.EvKey (V.KChar '1') []       )) = setSpeed s 300
-handleEvent s (VtyEvent (V.EvKey (V.KChar '2') []       )) = setSpeed s 100
-handleEvent s (VtyEvent (V.EvKey (V.KChar '3') []       )) = setSpeed s 50
-handleEvent s (VtyEvent (V.EvKey (V.KChar '4') []       )) = setSpeed s 10
+handleEvent s (VtyEvent (V.EvKey (V.KChar '1') [])) = setSpeed s 300
+handleEvent s (VtyEvent (V.EvKey (V.KChar '2') [])) = setSpeed s 100
+handleEvent s (VtyEvent (V.EvKey (V.KChar '3') [])) = setSpeed s 50
+handleEvent s (VtyEvent (V.EvKey (V.KChar '4') [])) = setSpeed s 10
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'v') [])) =
   continue $ s & hideUnseen %~ not
 handleEvent s (MouseDown p V.BLeft _ _) =
@@ -586,26 +590,14 @@ drawGameState state =
                | h ^. spreadsPheromones -> "U="
                | otherwise              -> "J="
 
-drawUI :: AppState -> [Widget Name]
-drawUI s =
-  [ C.hCenter
-      .   labeledBorder "Hive Mind"
-      $   (  C.hCenter
-          .  labeledBorder "Score"
-          $  padLeftRight 5
-          .  str
-          .  show
-          $  s
-          ^. gameState
-          .  score
-          )
-      <=> (C.hCenter (labeledBorder "World" (drawGameState s)) <+> C.hCenter
-            (labeledBorder "Selected" $ if null highlights
-              then padLeftRight 10 $ str "Nothing selected"
-              else vBox (highlightBox <$> highlights)
-            )
-          )
-  ]
+scoreWidget :: AppState -> Widget Name
+scoreWidget s =
+  labeledBorder "Score" $ padLeftRight 5 . str . show $ s ^. gameState . score
+
+selectedEntitiesWidget :: AppState -> Widget Name
+selectedEntitiesWidget s = labeledBorder "Selected" $ if null highlights
+  then padLeftRight 10 $ str "Nothing selected"
+  else vBox (highlightBox <$> highlights)
  where
   highlights :: [Entity']
   highlights = sortOn
@@ -624,6 +616,38 @@ drawUI s =
   info (Hiveling d) = pShowNoColor d
   info d            = pShowNoColor d
 
+helpWidget :: Widget Name
+helpWidget = labeledBorder "Help" $ vBox (renderCommand <$> commands)
+ where
+  commands :: [(String, String)]
+  commands =
+    [ ("?"                      , "Toggle this panel")
+    , ("<Esc>/<Ctrl-c>/<Ctrl-d>", "Quit")
+    , ("<Space>"                , "Pause / resume")
+    , ("1-4"                    , "Set speed")
+    , ("v"                      , "Toggle visibility indication")
+    , ("<Mouse-Left>"           , "Select entity for inspection")
+    ]
+  maxKeyLen :: Int
+  maxKeyLen = maximum (length . fst <$> commands)
+  renderCommand :: (String, String) -> Widget Name
+  renderCommand (key, explanation)
+    = str (key ++ replicate (maxKeyLen - length key + 2) ' ')
+      <+> str explanation
+
+worldWidget :: AppState -> Widget Name
+worldWidget s = labeledBorder "World" (drawGameState s)
+
+drawUI :: AppState -> [Widget Name]
+drawUI s = [C.hCenter . labeledBorder "Hive Mind" $ page]
+ where
+  page
+    | s ^. showHelp
+    = C.hCenter helpWidget
+    | otherwise
+    = C.hCenter (scoreWidget s)
+      <=> C.hCenter (worldWidget s)
+      <+> C.hCenter (selectedEntitiesWidget s)
 
 labeledBorder :: String -> Widget a -> Widget a
 labeledBorder label =
