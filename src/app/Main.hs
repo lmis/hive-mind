@@ -646,8 +646,7 @@ drawUI s = [C.hCenter . labeledBorder "Hive Mind" $ page]
     = C.hCenter helpWidget
     | otherwise
     = C.hCenter (scoreWidget s)
-      <=> C.hCenter (worldWidget s)
-      <+> C.hCenter (selectedEntitiesWidget s)
+      <=> (C.hCenter (worldWidget s) <+> C.hCenter (selectedEntitiesWidget s))
 
 labeledBorder :: String -> Widget a -> Widget a
 labeledBorder label =
