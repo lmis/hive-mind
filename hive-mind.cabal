@@ -18,6 +18,7 @@ library
                       ,raw-strings-qq
                       ,text
                       ,random
+                      ,random-shuffle
                       ,transformers
                       ,lens
                       ,QuickCheck
@@ -38,6 +39,7 @@ executable hive-mind
                       ,raw-strings-qq
                       ,text
                       ,random
+                      ,random-shuffle
                       ,transformers
                       ,lens
                       ,QuickCheck

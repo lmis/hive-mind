@@ -59,6 +59,7 @@ import           System.Console.GetOpt          ( OptDescr(..)
                                                 , ArgOrder(..)
                                                 )
 import           System.Environment             ( getArgs )
+import           System.Random.Shuffle          ( shuffle' )
 import           Text.Pretty.Simple             ( pShowNoColor )
 import           Data.Text.Lazy                 ( Text
                                                 , toStrict
@@ -119,6 +120,7 @@ import           Brick.BChan                    ( BChan
                                                 , writeBChan
                                                 )
 import           System.Random                  ( StdGen
+                                                , split
                                                 , mkStdGen
                                                 , next
                                                 )
@@ -231,11 +233,14 @@ sees h p = distance p (h ^. base . position) < 6
 
 doGameStep :: InteractiveCommand -> GameState -> IO GameState
 doGameStep proc state = do
-  stdGenRef             <- newIORef (state ^. randomGen)
-  -- TODO: Shuffle
-  hivelingsWithDecision <- mapM (takeDecision stdGenRef) hivelings
-  gen                   <- readIORef stdGenRef
-  return $ foldl' applyDecision (state & randomGen .~ gen) hivelingsWithDecision
+  let (g, g')           = split $ state ^. randomGen
+  let shuffledHivelings = shuffle' hivelings (length hivelings) g
+
+  stdGenRef             <- newIORef g'
+  hivelingsWithDecision <- mapM (takeDecision stdGenRef) shuffledHivelings
+  g''                   <- readIORef stdGenRef
+
+  return $ foldl' applyDecision (state & randomGen .~ g'') hivelingsWithDecision
  where
   hivelings :: [Hiveling']
   hivelings = state ^.. entities . each . asHiveling
