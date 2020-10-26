@@ -11,7 +11,7 @@ import           Common                         ( Position
                                                 , hasNutrition
                                                 , orientation
                                                 , lastDecision
-                                                , Direction(..)
+                                                , AbsoluteDirection(..)
                                                 , closestDirection
                                                 , offset2Direction
                                                 , Decision(..)
@@ -73,8 +73,8 @@ hivelingMind input
     Turn _ -> Move
     _ ->
       Turn
-        $ let minDirection = minBound :: Direction
-              maxDirection = maxBound :: Direction
+        $ let minDirection = minBound :: AbsoluteDirection
+              maxDirection = maxBound :: AbsoluteDirection
               (r, _)       = randomR
                 (fromEnum minDirection, fromEnum maxDirection)
                 (input ^. randomSeed . to mkStdGen)

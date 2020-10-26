@@ -19,7 +19,7 @@ import           Control.Lens                   ( Prism'
                                                 )
 
 type Position = (Int, Int)
-data Direction = North
+data AbsoluteDirection = North
                | NorthEast
                | East
                | SouthEast
@@ -29,7 +29,7 @@ data Direction = North
                | NorthWest deriving (Eq, Show, Read, Ord, Enum, Bounded)
 
 data Decision = Wait
-              | Turn Direction
+              | Turn AbsoluteDirection
               | Move
               | Pickup
               | Drop deriving (Eq, Show, Read)
@@ -52,7 +52,7 @@ data HivelingDetails = HivelingDetails {
   _lastDecision :: !Decision
  ,_hasNutrition :: !Bool
  ,_spreadsPheromones :: !Bool
- ,_orientation :: !Direction
+ ,_orientation :: !AbsoluteDirection
 } deriving (Eq, Show, Read)
 makeLenses ''HivelingDetails
 
@@ -86,10 +86,10 @@ relativePosition (ox, oy) (x, y) = (x - ox, y - oy)
 distance :: Position -> Position -> Double
 distance p q = norm $ relativePosition p q
 
-go :: Position -> Direction -> Position
+go :: Position -> AbsoluteDirection -> Position
 go (x, y) d = let (dx, dy) = direction2Offset d in (x + dx, y + dy)
 
-direction2Offset :: Direction -> Position
+direction2Offset :: AbsoluteDirection -> Position
 direction2Offset d = case d of
   North     -> (0, -1)
   NorthEast -> (1, -1)
@@ -100,10 +100,10 @@ direction2Offset d = case d of
   West      -> (-1, 0)
   NorthWest -> (-1, -1)
 
-offset2Direction :: Position -> Maybe Direction
+offset2Direction :: Position -> Maybe AbsoluteDirection
 offset2Direction p = find ((== p) . direction2Offset) [minBound .. maxBound]
 
-closestDirection :: Position -> Maybe Direction
+closestDirection :: Position -> Maybe AbsoluteDirection
 closestDirection (0, 0) = Nothing
 closestDirection (x, y) = offset2Direction (project x, project y)
  where

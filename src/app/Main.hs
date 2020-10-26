@@ -26,7 +26,7 @@ import           Common                         ( Entity(..)
                                                 , hasNutrition
                                                 , spreadsPheromones
                                                 , Position
-                                                , Direction(..)
+                                                , AbsoluteDirection(..)
                                                 , go
                                                 , distance
                                                 , relativePosition
@@ -224,8 +224,8 @@ startingState =
                                            }
   hivelingPositions      = [(1, 4), (-3, 12), (0, -6), (2, 2)]
   entrances              = (,) <$> [-5, 5] <*> [-5, 5]
-  topAndBottom           = (,) <$> [-9 .. 9] <*> [-20, -19, 19, 20]
-  sides                  = (,) <$> [-10, 10] <*> [-20 .. 20]
+  topAndBottom           = (,) <$> [-9 .. 9] <*> [-16, 16]
+  sides                  = (,) <$> [-10, 10] <*> [-16 .. 16]
   nutrition              = (,) <$> [-5 .. 5] <*> [-15, -14, 0, 14, 15]
 
 sees :: Entity EntityBase d -> Position -> Bool
@@ -283,7 +283,9 @@ doGameStep proc state = do
 applyDecision :: GameState -> (Hiveling', Decision) -> GameState
 applyDecision state (h, decision) =
   (case decision of
-      Wait           -> state & score -~ 1
+      Wait           -> if h ^. details . spreadsPheromones
+        then state & addEntity (Pheromone, targetPos)
+        else state & score -~ 1
       Turn direction -> state & hiveling . details . orientation .~ direction
       Move           -> case topEntityAtTarget of
         Just (Entity _ Obstacle    ) -> state & score -~ 2
@@ -551,11 +553,11 @@ handleEvent s _                      = continue s
 -- Rendering
 drawGameState :: AppState -> Widget Name
 drawGameState state =
-  vBox [ hBox [ renderPosition (x, y) | x <- [-10 .. 10] ] | y <- [-20 .. 20] ]
+  vBox [ hBox [ renderPosition (x, y) | x <- [-10 .. 10] ] | y <- [-16 .. 16] ]
  where
   renderPosition :: Position -> Widget Name
-  renderPosition p = clickable p . str . obscureInvisible p $ maybe
-    "  "
+  renderPosition p = clickable p . str . unlines . obscureInvisible p $ maybe
+    (replicate 2 "   ")
     (^. details . to render)
     (pointsOfInterest !? p)
   pointsOfInterest :: Map Position Entity'
@@ -582,20 +584,48 @@ drawGameState state =
   noHivelingSees p = not $ any (`sees` p) hivelings
   noHighlightClose :: Position -> Bool
   noHighlightClose p = all ((> 2.5) . distance p) highlights
-  obscureInvisible :: Position -> String -> String
+  obscureInvisible :: Position -> [String] -> [String]
   obscureInvisible p s
-    | state ^. hideUnseen && noHighlightClose p && noHivelingSees p = "??"
+    | state ^. hideUnseen && noHighlightClose p && noHivelingSees p = replicate
+      2
+      "???"
     | otherwise = s
-  render :: EntityDetails -> String
+  render :: EntityDetails -> [String]
   render d = case d of
-    Nutrition    -> "**"
-    HiveEntrance -> "{}"
-    Pheromone    -> ".~"
-    Obstacle     -> "XX"
-    Hiveling h | h ^. hasNutrition && h ^. spreadsPheromones -> "U*"
-               | h ^. hasNutrition      -> "J*"
-               | h ^. spreadsPheromones -> "U="
-               | otherwise              -> "J="
+    Nutrition    -> [".*.", "*.*"]
+    HiveEntrance -> ["/-\\", "\\-/"]
+    Pheromone    -> [".~.", "~.~"]
+    Obstacle     -> replicate 2 "XXX"
+    Hiveling h   -> renderHiveling h
+  renderHiveling :: HivelingDetails -> [String]
+  renderHiveling h =
+    let carried = [if h ^. hasNutrition then '*' else ' ']
+    in  case h ^. orientation of
+          North     -> ["/" ++ carried ++ "\\", "/ \\"]
+          -- /*\
+          -- / \
+          NorthEast -> [" /" ++ carried, "/ /"]
+          --  /*
+          -- / /
+          East      -> ["__ ", "--" ++ carried]
+          -- __
+          -- --*
+          SouthEast -> ["\\ \\", " \\" ++ carried]
+          -- \ \
+          --  \*
+          South     -> ["\\ /", "\\" ++ carried ++ "/"]
+          -- \ /
+          -- \*/
+          SouthWest -> ["/ /", carried ++ "/ "]
+          -- / /
+          -- */
+          West      -> [" __", carried ++ "--"]
+          --  __
+          -- *--
+          NorthWest -> [" " ++ carried ++ "\\", "\\ \\"]
+          -- *\
+          -- \ \
+
 
 scoreWidget :: AppState -> Widget Name
 scoreWidget s =
