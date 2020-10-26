@@ -4,20 +4,23 @@ module DemoMind
   )
 where
 
-import           Common                         ( base
+import           Common                         ( Position
+                                                , base
                                                 , details
                                                 , EntityDetails(..)
                                                 , hasNutrition
+                                                , orientation
+                                                , lastDecision
                                                 , Direction(..)
-                                                , path
-                                                , direction2Offset
+                                                , closestDirection
+                                                , offset2Direction
                                                 , Decision(..)
-                                                , DecisionType(..)
                                                 , hPrintFlush
                                                 )
 import           Client                         ( Entity'
                                                 , position
                                                 , Input(..)
+                                                , Hiveling'
                                                 , closeEntities
                                                 , currentHiveling
                                                 , randomSeed
@@ -30,12 +33,12 @@ import           System.Random                  ( mkStdGen
                                                 )
 import           Control.Lens                   ( (^?)
                                                 , (^.)
-                                                , has
                                                 , each
                                                 , to
                                                 , filtered
                                                 )
 import           System.IO                      ( stdout )
+import           Data.Maybe                     ( fromJust )
 
 
 
@@ -48,36 +51,32 @@ runDemo = do
 
 hivelingMind :: Input -> Decision
 hivelingMind input
-  | input ^. currentHiveling . details . hasNutrition
-  = case findClose (== HiveEntrance) of
-    Just obj -> path (obj ^. base . position) `followOrDo` Drop
+  | hiveling ^. details . hasNutrition = case findClose (== HiveEntrance) of
+    Just obj -> workTowards Drop (obj ^. base . position)
     Nothing  -> randomWalk
-  | otherwise
-  = case findClose (== Nutrition) of
-    Just obj -> path (obj ^. base . position) `followOrDo` Pickup
+  | otherwise = case findClose (== Nutrition) of
+    Just obj -> workTowards Pickup (obj ^. base . position)
     Nothing  -> randomWalk
  where
+  hiveling :: Hiveling'
+  hiveling = input ^. currentHiveling
   findClose :: (EntityDetails -> Bool) -> Maybe Entity'
   findClose t = input ^? closeEntities . each . filtered (t . (^. details))
-  followOrDo :: [Direction] -> DecisionType -> Decision
-  followOrDo (Center : p) t = p `followOrDo` t
-  followOrDo []           t = Decision t Center
-  followOrDo [direction]  t = Decision t direction
-  followOrDo (direction : _) _ =
-    if has
-         ( closeEntities
-         . each
-         . filtered (^. base . position . to (== direction2Offset direction))
-         )
-         input
-      then randomWalk
-      else Decision Move direction
+  workTowards :: Decision -> Position -> Decision
+  workTowards d (0, 0) = d
+  workTowards d p
+    | offset2Direction p == Just (hiveling ^. details . orientation) = d
+    | closestDirection p == Just (hiveling ^. details . orientation) = Move
+    | otherwise = Turn . fromJust $ closestDirection p
   randomWalk :: Decision
-  randomWalk =
-    Decision Move
-      $ let minDirection = minBound :: Direction
-            maxDirection = maxBound :: Direction
-            (r, _) = randomR (fromEnum minDirection, fromEnum maxDirection)
-                             (input ^. randomSeed . to mkStdGen)
-        in  toEnum r
+  randomWalk = case hiveling ^. details . lastDecision of
+    Turn _ -> Move
+    _ ->
+      Turn
+        $ let minDirection = minBound :: Direction
+              maxDirection = maxBound :: Direction
+              (r, _)       = randomR
+                (fromEnum minDirection, fromEnum maxDirection)
+                (input ^. randomSeed . to mkStdGen)
+          in  toEnum r
 

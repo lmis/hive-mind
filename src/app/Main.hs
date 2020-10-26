@@ -22,6 +22,7 @@ import           Common                         ( Entity(..)
                                                 , EntityDetails(..)
                                                 , HivelingDetails(..)
                                                 , lastDecision
+                                                , orientation
                                                 , hasNutrition
                                                 , spreadsPheromones
                                                 , Position
@@ -30,7 +31,6 @@ import           Common                         ( Entity(..)
                                                 , distance
                                                 , relativePosition
                                                 , Decision(..)
-                                                , DecisionType(..)
                                                 , hPrintFlush
                                                 , readCommand
                                                 )
@@ -217,11 +217,11 @@ startingState =
     ++ ((Obstacle, ) <$> sides)
     ++ ((Nutrition, ) <$> nutrition)
  where
-  defaultHivelingDetails = HivelingDetails
-    { _lastDecision      = Decision Move Center
-    , _hasNutrition      = False
-    , _spreadsPheromones = False
-    }
+  defaultHivelingDetails = HivelingDetails { _lastDecision      = Wait
+                                           , _hasNutrition      = False
+                                           , _spreadsPheromones = False
+                                           , _orientation       = North
+                                           }
   hivelingPositions      = [(1, 4), (-3, 12), (0, -6), (2, 2)]
   entrances              = (,) <$> [-5, 5] <*> [-5, 5]
   topAndBottom           = (,) <$> [-9 .. 9] <*> [-20, -19, 19, 20]
@@ -281,10 +281,12 @@ doGameStep proc state = do
       %~ relativePosition (hiveling ^. base . position)
 
 applyDecision :: GameState -> (Hiveling', Decision) -> GameState
-applyDecision state (h, decision@(Decision t direction)) =
-  (case t of
-      Move   -> case topEntityAtTarget of
-        Just (Entity _ Obstacle    ) -> state & score -~ 1
+applyDecision state (h, decision) =
+  (case decision of
+      Wait           -> state & score -~ 1
+      Turn direction -> state & hiveling . details . orientation .~ direction
+      Move           -> case topEntityAtTarget of
+        Just (Entity _ Obstacle    ) -> state & score -~ 2
         Just (Entity _ (Hiveling _)) -> state
         Just (Entity b' _) ->
           state
@@ -294,7 +296,7 @@ applyDecision state (h, decision@(Decision t direction)) =
             .  (zIndex .~ (b' ^. zIndex) + 1)
         Nothing ->
           state & hiveling . base %~ (position .~ targetPos) . (zIndex .~ 0)
-      Pickup -> case topEntityAtTarget of
+      Pickup         -> case topEntityAtTarget of
         Just (Entity _ Nutrition) -> if h ^. details . hasNutrition
           then state
           else
@@ -307,9 +309,9 @@ applyDecision state (h, decision@(Decision t direction)) =
                   .  identifier
               )
         _                         -> state
-      Drop   -> case topEntityAtTarget of
+      Drop           -> case topEntityAtTarget of
         Just (Entity _ HiveEntrance) -> if h ^. details . hasNutrition
-          then state & hiveling . details . hasNutrition .~ False & score +~ 10
+          then state & hiveling . details . hasNutrition .~ False & score +~ 15
           else state
         Just _                       -> state
         Nothing                      -> if h ^. details . hasNutrition
@@ -328,7 +330,7 @@ applyDecision state (h, decision@(Decision t direction)) =
     .~ decision
  where
   targetPos :: Position
-  targetPos = (h ^. base . position) `go` direction
+  targetPos = (h ^. base . position) `go` (h ^. details . orientation)
   topEntityAtTarget :: Maybe Entity'
   topEntityAtTarget =
     maximumByMay (comparing (^. base . zIndex))
@@ -585,7 +587,7 @@ drawGameState state =
     | state ^. hideUnseen && noHighlightClose p && noHivelingSees p = "??"
     | otherwise = s
   render :: EntityDetails -> String
-  render t = case t of
+  render d = case d of
     Nutrition    -> "**"
     HiveEntrance -> "{}"
     Pheromone    -> ".~"

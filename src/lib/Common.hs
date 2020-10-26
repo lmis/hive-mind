@@ -11,7 +11,6 @@ import           System.Process                 ( runInteractiveCommand
                                                 )
 import           GHC.Float                      ( int2Double )
 import           Data.List                      ( find )
-import           Data.Maybe                     ( fromJust )
 import           Control.Lens                   ( Prism'
                                                 , (^.)
                                                 , prism
@@ -20,8 +19,7 @@ import           Control.Lens                   ( Prism'
                                                 )
 
 type Position = (Int, Int)
-data Direction = Center
-               | North
+data Direction = North
                | NorthEast
                | East
                | SouthEast
@@ -30,13 +28,11 @@ data Direction = Center
                | West
                | NorthWest deriving (Eq, Show, Read, Ord, Enum, Bounded)
 
-data DecisionType = Move
-                  | Pickup
-                  | Drop deriving (Eq, Show, Read)
-
-data Decision = Decision DecisionType Direction deriving (Eq, Show, Read)
-
-
+data Decision = Wait
+              | Turn Direction
+              | Move
+              | Pickup
+              | Drop deriving (Eq, Show, Read)
 
 data EntityBase = EntityBase {
   _identifier :: !Int
@@ -56,6 +52,7 @@ data HivelingDetails = HivelingDetails {
   _lastDecision :: !Decision
  ,_hasNutrition :: !Bool
  ,_spreadsPheromones :: !Bool
+ ,_orientation :: !Direction
 } deriving (Eq, Show, Read)
 makeLenses ''HivelingDetails
 
@@ -94,7 +91,6 @@ go (x, y) d = let (dx, dy) = direction2Offset d in (x + dx, y + dy)
 
 direction2Offset :: Direction -> Position
 direction2Offset d = case d of
-  Center    -> (0, 0)
   North     -> (0, -1)
   NorthEast -> (1, -1)
   East      -> (1, 0)
@@ -107,21 +103,14 @@ direction2Offset d = case d of
 offset2Direction :: Position -> Maybe Direction
 offset2Direction p = find ((== p) . direction2Offset) [minBound .. maxBound]
 
-closestDirection :: Position -> Direction
-closestDirection (x, y) = fromJust $ offset2Direction (project x, project y)
+closestDirection :: Position -> Maybe Direction
+closestDirection (0, 0) = Nothing
+closestDirection (x, y) = offset2Direction (project x, project y)
  where
   project :: Int -> Int
   project s = round $ s `divInt` max (abs x) (abs y)
   divInt :: Int -> Int -> Double
   divInt a b = int2Double a / int2Double b
-
-path :: Position -> [Direction]
-path p = case offset2Direction p of
-  Just d -> [d]
-  _ ->
-    let dir    = closestDirection p
-        remain = relativePosition (direction2Offset dir) p
-    in  dir : path remain
 
 -- Handles
 hPrintFlush :: Show a => Handle -> a -> IO ()
