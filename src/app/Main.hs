@@ -130,6 +130,8 @@ import           Control.Lens                   ( ASetter'
                                                 , to
                                                 , filtered
                                                 , _Just
+                                                , _1
+                                                , _2
                                                 , makeLenses
                                                 )
 
@@ -181,6 +183,7 @@ type Name = Position
 data AppEvent = AdvanceGame | CheckHotReload deriving (Eq, Show, Ord)
 data AppState = AppState {
   _gameState :: !GameState
+ ,_renderArea :: !(Position, Position)
  ,_hiveMindProcess :: !InteractiveCommand
  ,_mindVersion :: !String
  ,_getMindVersionCommand :: !String
@@ -504,6 +507,7 @@ runApp (mindCommand, getMindVersionCommand') _ = do
     (Just chan)
     app
     AppState { _gameState             = startingState
+             , _renderArea            = ((-6, -10), (6, 10))
              , _iteration             = 0
              , _hideUnseen            = False
              , _showHelp              = False
@@ -559,6 +563,14 @@ handleEvent s (VtyEvent (V.EvKey (V.KChar ' ') [])) = do
   _ <- liftIO $ modifyIORef (s ^. speedSettings) (running %~ not)
   continue s
 handleEvent s (VtyEvent (V.EvKey V.KEnter      [])) = handleGameAdvance s
+handleEvent s (VtyEvent (V.EvKey V.KUp [])) =
+  continue $ s & renderArea %~ (_1 . _2 -~ 1) . (_2 . _2 -~ 1)
+handleEvent s (VtyEvent (V.EvKey V.KDown [])) =
+  continue $ s & renderArea %~ (_1 . _2 +~ 1) . (_2 . _2 +~ 1)
+handleEvent s (VtyEvent (V.EvKey V.KLeft [])) =
+  continue $ s & renderArea %~ (_1 . _1 -~ 1) . (_2 . _1 -~ 1)
+handleEvent s (VtyEvent (V.EvKey V.KRight [])) =
+  continue $ s & renderArea %~ (_1 . _1 +~ 1) . (_2 . _1 +~ 1)
 handleEvent s (VtyEvent (V.EvKey (V.KChar '1') [])) = setSpeed s 300
 handleEvent s (VtyEvent (V.EvKey (V.KChar '2') [])) = setSpeed s 100
 handleEvent s (VtyEvent (V.EvKey (V.KChar '3') [])) = setSpeed s 50
@@ -605,7 +617,11 @@ fillPosition c = replicate 3 $ replicate 5 c
 
 drawGameState :: AppState -> Widget Name
 drawGameState state =
-  vBox [ hBox [ renderPosition (x, -y) | x <- [-10 .. 10] ] | y <- [-16 .. 16] ]
+  let ((xLower, yLower), (xUpper, yUpper)) = state ^. renderArea
+  in  vBox
+        [ hBox [ renderPosition (x, -y) | x <- [xLower .. xUpper] ]
+        | y <- [yLower .. yUpper]
+        ]
  where
   renderPosition :: Position -> Widget Name
   renderPosition p = clickable p . str . unlines . obscureInvisible p $ maybe
@@ -711,6 +727,7 @@ helpWidget = labeledBorder "Help" $ vBox (renderCommand <$> commands)
     , ("<Space>"                , "Pause / resume")
     , ("<Enter>"                , "Perform single step")
     , ("1-4"                    , "Set speed")
+    , ("Arrow keys"             , "Move view")
     , ("v"                      , "Toggle visibility indication")
     , ("<Mouse-Left>"           , "Select entity for inspection")
     ]
