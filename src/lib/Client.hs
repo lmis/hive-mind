@@ -21,7 +21,8 @@ data HivelingDetails = HivelingDetails {
 } deriving (Eq, Show, Read)
 makeLenses ''HivelingDetails
 
-type Entity' = Entity EntityBase EntityDetails
+type EntityDetails' = EntityDetails HivelingDetails
+type Entity' = Entity EntityBase EntityDetails'
 type Hiveling' = Entity EntityBase HivelingDetails
 
 data Input = Input {

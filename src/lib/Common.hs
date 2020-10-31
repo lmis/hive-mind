@@ -10,10 +10,7 @@ import           System.Process                 ( runInteractiveCommand
                                                 , waitForProcess
                                                 )
 import           GHC.Float                      ( int2Double )
-import           Control.Lens                   ( Prism'
-                                                , (^.)
-                                                , prism
-                                                , makeLenses
+import           Control.Lens                   ( makeLenses
                                                 , makePrisms
                                                 )
 
@@ -30,13 +27,6 @@ data Decision = Wait
               | Pickup
               | Drop deriving (Eq, Show, Read)
 
-data EntityBase = EntityBase {
-  _identifier :: !Int
- ,_position :: !Position
- ,_zIndex :: !Int
- ,_highlighted :: !Bool
-} deriving (Eq, Show, Read)
-makeLenses ''EntityBase
 
 data Entity b d = Entity {
   _base :: !b
@@ -44,33 +34,13 @@ data Entity b d = Entity {
 } deriving (Eq, Show, Read)
 makeLenses ''Entity
 
-data HivelingDetails = HivelingDetails {
-  _lastDecision :: !Decision
- ,_hasNutrition :: !Bool
- ,_spreadsPheromones :: !Bool
- ,_orientation :: !Rotation -- Rotation w.r.t North
-} deriving (Eq, Show, Read)
-makeLenses ''HivelingDetails
 
-data EntityDetails = Hiveling HivelingDetails
+data EntityDetails h = Hiveling h
                    | Nutrition
                    | HiveEntrance
                    | Pheromone
                    | Obstacle deriving (Eq, Show, Read)
 makePrisms ''EntityDetails
-
-type Entity' b = Entity b EntityDetails
-type Hiveling' b = Entity b HivelingDetails
--- Traversals & Utils
-asHiveling :: Prism' (Entity' b) (Hiveling' b)
-asHiveling = prism collapse refine
- where
-  collapse :: Hiveling' b -> Entity' b
-  collapse h = Entity { _base = h ^. base, _details = Hiveling $ h ^. details }
-  refine :: Entity' b -> Either (Entity' b) (Hiveling' b)
-  refine (Entity b (Hiveling d)) = Right $ Entity b d
-  refine e                       = Left e
-
 
 -- Position and Rotation
 addRotations :: Rotation -> Rotation -> Rotation

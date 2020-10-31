@@ -1,3 +1,5 @@
+{-# LANGUAGE
+   RankNTypes #-}
 module DemoMind
   ( runDemo
   , hivelingMind
@@ -15,7 +17,6 @@ import           Common                         ( Position
 import           Client                         ( Entity'
                                                 , position
                                                 , Input(..)
-                                                , Hiveling'
                                                 , closeEntities
                                                 , hasNutrition
                                                 , lastDecision
@@ -28,7 +29,8 @@ import           Control.Monad                  ( forever
 import           System.Random                  ( mkStdGen
                                                 , randomR
                                                 )
-import           Control.Lens                   ( (^?)
+import           Control.Lens                   ( Traversal'
+                                                , (^?)
                                                 , (^.)
                                                 , each
                                                 , to
@@ -45,19 +47,40 @@ runDemo = do
     input <- getLine
     void . hPrintFlush stdout . hivelingMind . read $ input
 
-hivelingMind :: Input -> Decision
-hivelingMind input
-  | hiveling ^. details . hasNutrition = case findClose (== HiveEntrance) of
-    Just obj -> workTowards Drop (obj ^. base . position)
-    Nothing  -> randomWalk
-  | otherwise = case findClose (== Nutrition) of
-    Just obj -> workTowards Pickup (obj ^. base . position)
-    Nothing  -> randomWalk
+entityAt :: Rotation -> Traversal' Input Entity'
+entityAt rotation =
+  closeEntities
+    . each
+    . filtered (\e -> (e ^. base . position) == rotation2Pos rotation)
  where
-  hiveling :: Hiveling'
-  hiveling = input ^. currentHiveling
-  findClose :: (EntityDetails -> Bool) -> Maybe Entity'
-  findClose t = input ^? closeEntities . each . filtered (t . (^. details))
+  rotation2Pos :: Rotation -> Position
+  rotation2Pos None             = (0, 1)
+  rotation2Pos Clockwise        = (1, 0)
+  rotation2Pos Back             = (0, -1)
+  rotation2Pos Counterclockwise = (-1, 0)
+
+randomRotation :: Input -> Rotation
+randomRotation input =
+  let minDirection = minBound :: Rotation
+      maxDirection = maxBound :: Rotation
+      (r, _)       = randomR (fromEnum minDirection, fromEnum maxDirection)
+                             (input ^. randomSeed . to mkStdGen)
+  in  toEnum r
+
+searchFood :: Input -> Decision
+searchFood = search (\e -> (e ^. details) == Nutrition) Pickup
+
+bringFoodHome :: Input -> Decision
+bringFoodHome = search (\e -> (e ^. details) == HiveEntrance) Drop
+
+
+search :: (Entity' -> Bool) -> Decision -> Input -> Decision
+search condition decision input
+  | input ^? entityAt None . to condition == Just True = decision
+  | otherwise = case input ^? closeEntities . each . filtered condition of
+    Just e  -> workTowards decision (e ^. base . position)
+    Nothing -> randomWalk
+ where
   workTowards :: Decision -> Position -> Decision
   workTowards _ (0, 0) = Move
   workTowards d (0, 1) = d
@@ -66,14 +89,26 @@ hivelingMind input
                        | x < 0       = Turn Counterclockwise
                        | otherwise   = Turn Clockwise
   randomWalk :: Decision
-  randomWalk = case hiveling ^. details . lastDecision of
+  randomWalk = case input ^. currentHiveling . details . lastDecision of
     Turn _ -> Move
-    _ ->
-      Turn
-        $ let minDirection = minBound :: Rotation
-              maxDirection = maxBound :: Rotation
-              (r, _)       = randomR
-                (fromEnum minDirection, fromEnum maxDirection)
-                (input ^. randomSeed . to mkStdGen)
-          in  toEnum r
+    _      -> Turn $ randomRotation input
+
+hivelingMind :: Input -> Decision
+hivelingMind input =
+  let decision = if input ^. currentHiveling . details . hasNutrition
+        then bringFoodHome input
+        else searchFood input
+   -- Avoid other Hivelings
+  in  case decision of
+        Move          -> case input ^? entityAt None . details of
+          Just (Hiveling _) -> Turn $ randomRotation input
+          Just Obstacle     -> Turn $ randomRotation input
+          _                 -> decision
+        Turn rotation -> case input ^? entityAt rotation . details of
+          Just (Hiveling _) -> Move
+          Just Obstacle     -> Move
+          _                 -> decision
+        _             -> decision
+
+
 

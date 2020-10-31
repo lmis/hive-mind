@@ -11,20 +11,9 @@ where
 
 import           DemoMind                       ( runDemo )
 import           Common                         ( Entity(..)
-                                                , asHiveling
                                                 , base
                                                 , details
-                                                , EntityBase(..)
-                                                , identifier
-                                                , position
-                                                , zIndex
-                                                , highlighted
                                                 , EntityDetails(..)
-                                                , HivelingDetails(..)
-                                                , lastDecision
-                                                , orientation
-                                                , hasNutrition
-                                                , spreadsPheromones
                                                 , Position
                                                 , Rotation(..)
                                                 , addRotations
@@ -36,6 +25,7 @@ import           Common                         ( Entity(..)
                                                 )
 import qualified Client                         ( Input(..)
                                                 , EntityBase(..)
+                                                , EntityDetails'
                                                 , HivelingDetails(..)
                                                 )
 import           System.Process                 ( ProcessHandle
@@ -126,6 +116,8 @@ import           System.Random                  ( StdGen
                                                 , next
                                                 )
 import           Control.Lens                   ( ASetter'
+                                                , Prism'
+                                                , prism
                                                 , (&)
                                                 , (^.)
                                                 , (^..)
@@ -141,8 +133,24 @@ import           Control.Lens                   ( ASetter'
                                                 , makeLenses
                                                 )
 
+data EntityBase = EntityBase {
+  _identifier :: !Int
+ ,_position :: !Position
+ ,_zIndex :: !Int
+ ,_highlighted :: !Bool
+} deriving (Eq, Show, Read)
+makeLenses ''EntityBase
 
-type Entity' = Entity EntityBase EntityDetails
+data HivelingDetails = HivelingDetails {
+  _lastDecision :: !Decision
+ ,_hasNutrition :: !Bool
+ ,_spreadsPheromones :: !Bool
+ ,_orientation :: !Rotation -- Rotation w.r.t North
+} deriving (Eq, Show, Read)
+makeLenses ''HivelingDetails
+
+type EntityDetails' = EntityDetails HivelingDetails
+type Entity' = Entity EntityBase EntityDetails'
 type Hiveling' = Entity EntityBase HivelingDetails
 
 data GameState = GameState {
@@ -183,8 +191,18 @@ data AppState = AppState {
 }
 makeLenses ''AppState
 
+-- Traversals & Utils
+asHiveling :: Prism' Entity' Hiveling'
+asHiveling = prism collapse refine
+ where
+  collapse :: Hiveling' -> Entity'
+  collapse h = Entity { _base = h ^. base, _details = Hiveling $ h ^. details }
+  refine :: Entity' -> Either Entity' Hiveling'
+  refine (Entity b (Hiveling d)) = Right $ Entity b d
+  refine e                       = Left e
+
 -- Game init & advancing
-addEntity :: (EntityDetails, Position) -> GameState -> GameState
+addEntity :: (EntityDetails', Position) -> GameState -> GameState
 addEntity (details', position') state =
   state & nextId +~ 1 & entities %~ (new :)
  where
@@ -275,17 +293,23 @@ doGameStep proc state = do
              , _details = Client.HivelingDetails { .. }
              }
   forHivelingMind :: Hiveling'
-                  -> Entity EntityBase d
-                  -> Entity Client.EntityBase d
-  forHivelingMind hiveling Entity { _base = EntityBase { _position, ..}, ..} =
-    Entity
-      { _base = Client.EntityBase
+                  -> Entity EntityBase EntityDetails'
+                  -> Entity Client.EntityBase Client.EntityDetails'
+  forHivelingMind hiveling Entity { _base = EntityBase { _position, ..}, _details }
+    = Entity
+      { _base    = Client.EntityBase
         { _position =
           inverseRotatePosition (hiveling ^. details . orientation)
             $ relativePosition (hiveling ^. base . position) _position
         , ..
         }
-      , ..
+      , _details = case _details of
+                     Hiveling HivelingDetails {..} ->
+                       Hiveling Client.HivelingDetails { .. }
+                     Nutrition    -> Nutrition
+                     Obstacle     -> Obstacle
+                     HiveEntrance -> HiveEntrance
+                     Pheromone    -> Pheromone
       }
   inverseRotatePosition :: Rotation -> Position -> Position
   inverseRotatePosition None             p      = p
@@ -618,7 +642,7 @@ drawGameState state =
     = fillPosition '?'
     | otherwise
     = s
-  render :: EntityDetails -> [String]
+  render :: EntityDetails' -> [String]
   render d = case d of
     Nutrition    -> [" .*. ", "* * *", " '*' "]
     HiveEntrance -> ["/---\\", "| . |", "\\---/"]
@@ -673,7 +697,7 @@ selectedEntitiesWidget s = labeledBorder "Selected" $ if null highlights
       .  info
       $  e
       ^. details
-  info :: EntityDetails -> Text
+  info :: EntityDetails' -> Text
   info (Hiveling d) = pShowNoColor d
   info d            = pShowNoColor d
 
