@@ -5,7 +5,7 @@ import           Control.Lens                   ( makeLenses )
 import           Common                         ( Position
                                                 , Entity(..)
                                                 , EntityDetails(..)
-                                                , HivelingDetails
+                                                , Decision(..)
                                                 )
 
 data EntityBase = EntityBase {
@@ -13,6 +13,13 @@ data EntityBase = EntityBase {
  ,_zIndex :: !Int
 } deriving (Eq, Show, Read)
 makeLenses ''EntityBase
+
+data HivelingDetails = HivelingDetails {
+  _hasNutrition :: !Bool
+ ,_spreadsPheromones :: !Bool
+ ,_lastDecision :: !Decision
+} deriving (Eq, Show, Read)
+makeLenses ''HivelingDetails
 
 type Entity' = Entity EntityBase EntityDetails
 type Hiveling' = Entity EntityBase HivelingDetails

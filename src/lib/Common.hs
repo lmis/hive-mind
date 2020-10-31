@@ -10,7 +10,6 @@ import           System.Process                 ( runInteractiveCommand
                                                 , waitForProcess
                                                 )
 import           GHC.Float                      ( int2Double )
-import           Data.List                      ( find )
 import           Control.Lens                   ( Prism'
                                                 , (^.)
                                                 , prism
@@ -19,17 +18,14 @@ import           Control.Lens                   ( Prism'
                                                 )
 
 type Position = (Int, Int)
-data AbsoluteDirection = North
-               | NorthEast
-               | East
-               | SouthEast
-               | South
-               | SouthWest
-               | West
-               | NorthWest deriving (Eq, Show, Read, Ord, Enum, Bounded)
+
+data Rotation = None
+              | Clockwise
+              | Back
+              | Counterclockwise deriving (Eq, Show, Read, Ord, Enum, Bounded)
 
 data Decision = Wait
-              | Turn AbsoluteDirection
+              | Turn Rotation
               | Move
               | Pickup
               | Drop deriving (Eq, Show, Read)
@@ -52,7 +48,7 @@ data HivelingDetails = HivelingDetails {
   _lastDecision :: !Decision
  ,_hasNutrition :: !Bool
  ,_spreadsPheromones :: !Bool
- ,_orientation :: !AbsoluteDirection
+ ,_orientation :: !Rotation -- Rotation w.r.t North
 } deriving (Eq, Show, Read)
 makeLenses ''HivelingDetails
 
@@ -76,41 +72,19 @@ asHiveling = prism collapse refine
   refine e                       = Left e
 
 
--- Direction
+-- Position and Rotation
+addRotations :: Rotation -> Rotation -> Rotation
+addRotations r1 r2 = toEnum $ (fromEnum r1 + fromEnum r2) `mod` 4
+
 norm :: Position -> Double
 norm (x, y) = sqrt . int2Double $ x * x + y * y
 
 relativePosition :: Position -> Position -> Position
 relativePosition (ox, oy) (x, y) = (x - ox, y - oy)
 
+
 distance :: Position -> Position -> Double
 distance p q = norm $ relativePosition p q
-
-go :: Position -> AbsoluteDirection -> Position
-go (x, y) d = let (dx, dy) = direction2Offset d in (x + dx, y + dy)
-
-direction2Offset :: AbsoluteDirection -> Position
-direction2Offset d = case d of
-  North     -> (0, -1)
-  NorthEast -> (1, -1)
-  East      -> (1, 0)
-  SouthEast -> (1, 1)
-  South     -> (0, 1)
-  SouthWest -> (-1, 1)
-  West      -> (-1, 0)
-  NorthWest -> (-1, -1)
-
-offset2Direction :: Position -> Maybe AbsoluteDirection
-offset2Direction p = find ((== p) . direction2Offset) [minBound .. maxBound]
-
-closestDirection :: Position -> Maybe AbsoluteDirection
-closestDirection (0, 0) = Nothing
-closestDirection (x, y) = offset2Direction (project x, project y)
- where
-  project :: Int -> Int
-  project s = round $ s `divInt` max (abs x) (abs y)
-  divInt :: Int -> Int -> Double
-  divInt a b = int2Double a / int2Double b
 
 -- Handles
 hPrintFlush :: Show a => Handle -> a -> IO ()

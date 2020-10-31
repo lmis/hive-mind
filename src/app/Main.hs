@@ -26,8 +26,8 @@ import           Common                         ( Entity(..)
                                                 , hasNutrition
                                                 , spreadsPheromones
                                                 , Position
-                                                , AbsoluteDirection(..)
-                                                , go
+                                                , Rotation(..)
+                                                , addRotations
                                                 , distance
                                                 , relativePosition
                                                 , Decision(..)
@@ -36,6 +36,7 @@ import           Common                         ( Entity(..)
                                                 )
 import qualified Client                         ( Input(..)
                                                 , EntityBase(..)
+                                                , HivelingDetails(..)
                                                 )
 import           System.Process                 ( ProcessHandle
                                                 , runInteractiveCommand
@@ -220,7 +221,7 @@ startingState =
   defaultHivelingDetails = HivelingDetails { _lastDecision      = Wait
                                            , _hasNutrition      = False
                                            , _spreadsPheromones = False
-                                           , _orientation       = North
+                                           , _orientation       = None
                                            }
   hivelingPositions      = [(1, 4), (-3, 12), (0, -6), (2, 2)]
   entrances              = (,) <$> [-5, 5] <*> [-5, 5]
@@ -262,32 +263,46 @@ doGameStep proc state = do
           .   filtered (\e -> hiveling `sees` (e ^. base . position))
           &   each
           %~  forHivelingMind hiveling
-        , _currentHiveling = withClientEntityBase hiveling
+        , _currentHiveling = hivelingWithClientTypes hiveling
         , _randomSeed      = r
         }
     writeIORef stdGenRef g'
     return (hiveling, decision)
-  withClientEntityBase :: Entity EntityBase d -> Entity Client.EntityBase d
-  withClientEntityBase Entity { _base = EntityBase {..}, ..} =
-    Entity { _base = Client.EntityBase { .. }, .. }
+  hivelingWithClientTypes :: Hiveling'
+                          -> Entity Client.EntityBase Client.HivelingDetails
+  hivelingWithClientTypes Entity { _base = EntityBase {..}, _details = HivelingDetails {..} }
+    = Entity { _base    = Client.EntityBase { .. }
+             , _details = Client.HivelingDetails { .. }
+             }
   forHivelingMind :: Hiveling'
                   -> Entity EntityBase d
                   -> Entity Client.EntityBase d
-  forHivelingMind hiveling e =
-    withClientEntityBase
-      $  e
-      &  base
-      .  position
-      %~ relativePosition (hiveling ^. base . position)
+  forHivelingMind hiveling Entity { _base = EntityBase { _position, ..}, ..} =
+    Entity
+      { _base = Client.EntityBase
+        { _position =
+          inverseRotatePosition (hiveling ^. details . orientation)
+            $ relativePosition (hiveling ^. base . position) _position
+        , ..
+        }
+      , ..
+      }
+  inverseRotatePosition :: Rotation -> Position -> Position
+  inverseRotatePosition None             p      = p
+  inverseRotatePosition Clockwise        (x, y) = (-y, x)
+  inverseRotatePosition Counterclockwise (x, y) = (y, -x)
+  inverseRotatePosition Back             (x, y) = (-x, -y)
 
 applyDecision :: GameState -> (Hiveling', Decision) -> GameState
 applyDecision state (h, decision) =
   (case decision of
-      Wait           -> if h ^. details . spreadsPheromones
+      Wait      -> if h ^. details . spreadsPheromones
         then state & addEntity (Pheromone, targetPos)
         else state & score -~ 1
-      Turn direction -> state & hiveling . details . orientation .~ direction
-      Move           -> case topEntityAtTarget of
+      Turn None -> state & score -~ 1
+      Turn rotation ->
+        state & hiveling . details . orientation %~ addRotations rotation
+      Move   -> case topEntityAtTarget of
         Just (Entity _ Obstacle    ) -> state & score -~ 2
         Just (Entity _ (Hiveling _)) -> state
         Just (Entity b' _) ->
@@ -298,7 +313,7 @@ applyDecision state (h, decision) =
             .  (zIndex .~ (b' ^. zIndex) + 1)
         Nothing ->
           state & hiveling . base %~ (position .~ targetPos) . (zIndex .~ 0)
-      Pickup         -> case topEntityAtTarget of
+      Pickup -> case topEntityAtTarget of
         Just (Entity _ Nutrition) -> if h ^. details . hasNutrition
           then state
           else
@@ -311,7 +326,7 @@ applyDecision state (h, decision) =
                   .  identifier
               )
         _                         -> state
-      Drop           -> case topEntityAtTarget of
+      Drop   -> case topEntityAtTarget of
         Just (Entity _ HiveEntrance) -> if h ^. details . hasNutrition
           then state & hiveling . details . hasNutrition .~ False & score +~ 15
           else state
@@ -332,7 +347,13 @@ applyDecision state (h, decision) =
     .~ decision
  where
   targetPos :: Position
-  targetPos = (h ^. base . position) `go` (h ^. details . orientation)
+  targetPos =
+    let (x, y) = h ^. base . position
+    in  case h ^. details . orientation of
+          None             -> (x, y + 1)
+          Clockwise        -> (x + 1, y)
+          Back             -> (x, y - 1)
+          Counterclockwise -> (x - 1, y)
   topEntityAtTarget :: Maybe Entity'
   topEntityAtTarget =
     maximumByMay (comparing (^. base . zIndex))
@@ -513,6 +534,7 @@ handleEvent s (VtyEvent (V.EvKey (V.KChar '?') [])) =
 handleEvent s (VtyEvent (V.EvKey (V.KChar ' ') [])) = do
   _ <- liftIO $ modifyIORef (s ^. speedSettings) (running %~ not)
   continue s
+handleEvent s (VtyEvent (V.EvKey V.KEnter      [])) = handleGameAdvance s
 handleEvent s (VtyEvent (V.EvKey (V.KChar '1') [])) = setSpeed s 300
 handleEvent s (VtyEvent (V.EvKey (V.KChar '2') [])) = setSpeed s 100
 handleEvent s (VtyEvent (V.EvKey (V.KChar '3') [])) = setSpeed s 50
@@ -545,15 +567,18 @@ handleEvent s (AppEvent CheckHotReload) = do
     p <- restart $ s ^. hiveMindProcess
     writeIORef (s ^. speedSettings) speedSettings'
     return p
-handleEvent s (AppEvent AdvanceGame) = do
+handleEvent s (AppEvent AdvanceGame) = handleGameAdvance s
+handleEvent s _                      = continue s
+
+handleGameAdvance :: AppState -> EventM Name (Next AppState)
+handleGameAdvance s = do
   nextState <- liftIO $ doGameStep (s ^. hiveMindProcess) (s ^. gameState)
   continue $ s & iteration +~ 1 & gameState .~ nextState
-handleEvent s _                      = continue s
 
 -- Rendering
 drawGameState :: AppState -> Widget Name
 drawGameState state =
-  vBox [ hBox [ renderPosition (x, y) | x <- [-10 .. 10] ] | y <- [-16 .. 16] ]
+  vBox [ hBox [ renderPosition (x, -y) | x <- [-10 .. 10] ] | y <- [-16 .. 16] ]
  where
   renderPosition :: Position -> Widget Name
   renderPosition p = clickable p . str . unlines . obscureInvisible p $ maybe
@@ -601,30 +626,22 @@ drawGameState state =
   renderHiveling h =
     let carried = [if h ^. hasNutrition then '*' else ' ']
     in  case h ^. orientation of
-          North     -> ["/" ++ carried ++ "\\", "/ \\"]
-          -- /*\
-          -- / \
-          NorthEast -> [" /" ++ carried, "/ /"]
-          --  /*
-          -- / /
-          East      -> ["__ ", "--" ++ carried]
-          -- __
-          -- --*
-          SouthEast -> ["\\ \\", " \\" ++ carried]
-          -- \ \
-          --  \*
-          South     -> ["\\ /", "\\" ++ carried ++ "/"]
-          -- \ /
-          -- \*/
-          SouthWest -> ["/ /", carried ++ "/ "]
-          -- / /
-          -- */
-          West      -> [" __", carried ++ "--"]
-          --  __
-          -- *--
-          NorthWest -> [" " ++ carried ++ "\\", "\\ \\"]
-          -- *\
-          -- \ \
+          None             -> ["/" ++ carried ++ "\\", "/ \\"]
+          -- \**/
+          -- //\\
+          -- //\\
+          Clockwise        -> ["__ ", ">>" ++ carried]
+          -- \ \/
+          -- >>>*
+          -- / /\
+          Back             -> ["\\ /", "\\" ++ carried ++ "/"]
+          -- \\//
+          -- \\//
+          -- /**\
+          Counterclockwise -> [" __", carried ++ "<<"]
+          -- \/ /
+          -- *<<<
+          -- /\ \
 
 
 scoreWidget :: AppState -> Widget Name
@@ -643,7 +660,7 @@ selectedEntitiesWidget s = labeledBorder "Selected" $ if null highlights
   highlightBox :: Entity' -> Widget Name
   highlightBox e =
     C.hCenter
-      $  labeledBorder (e ^. base . position . to show)
+      $ labeledBorder (e ^. base . position . to (\(x, y) -> (x, -y)) . to show)
       .  txt
       .  toStrict
       .  info
@@ -661,6 +678,7 @@ helpWidget = labeledBorder "Help" $ vBox (renderCommand <$> commands)
     [ ("?"                      , "Toggle this panel")
     , ("<Esc>/<Ctrl-c>/<Ctrl-d>", "Quit")
     , ("<Space>"                , "Pause / resume")
+    , ("<Enter>"                , "Perform single step")
     , ("1-4"                    , "Set speed")
     , ("v"                      , "Toggle visibility indication")
     , ("<Mouse-Left>"           , "Select entity for inspection")

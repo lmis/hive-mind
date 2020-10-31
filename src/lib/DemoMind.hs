@@ -8,12 +8,7 @@ import           Common                         ( Position
                                                 , base
                                                 , details
                                                 , EntityDetails(..)
-                                                , hasNutrition
-                                                , orientation
-                                                , lastDecision
-                                                , AbsoluteDirection(..)
-                                                , closestDirection
-                                                , offset2Direction
+                                                , Rotation(..)
                                                 , Decision(..)
                                                 , hPrintFlush
                                                 )
@@ -22,6 +17,8 @@ import           Client                         ( Entity'
                                                 , Input(..)
                                                 , Hiveling'
                                                 , closeEntities
+                                                , hasNutrition
+                                                , lastDecision
                                                 , currentHiveling
                                                 , randomSeed
                                                 )
@@ -38,7 +35,6 @@ import           Control.Lens                   ( (^?)
                                                 , filtered
                                                 )
 import           System.IO                      ( stdout )
-import           Data.Maybe                     ( fromJust )
 
 
 
@@ -63,18 +59,19 @@ hivelingMind input
   findClose :: (EntityDetails -> Bool) -> Maybe Entity'
   findClose t = input ^? closeEntities . each . filtered (t . (^. details))
   workTowards :: Decision -> Position -> Decision
-  workTowards d (0, 0) = d
-  workTowards d p
-    | offset2Direction p == Just (hiveling ^. details . orientation) = d
-    | closestDirection p == Just (hiveling ^. details . orientation) = Move
-    | otherwise = Turn . fromJust $ closestDirection p
+  workTowards _ (0, 0) = Move
+  workTowards d (0, 1) = d
+  workTowards _ (x, y) | y >= abs x  = Move
+                       | -y >= abs x = Turn Back
+                       | x < 0       = Turn Counterclockwise
+                       | otherwise   = Turn Clockwise
   randomWalk :: Decision
   randomWalk = case hiveling ^. details . lastDecision of
     Turn _ -> Move
     _ ->
       Turn
-        $ let minDirection = minBound :: AbsoluteDirection
-              maxDirection = maxBound :: AbsoluteDirection
+        $ let minDirection = minBound :: Rotation
+              maxDirection = maxBound :: Rotation
               (r, _)       = randomR
                 (fromEnum minDirection, fromEnum maxDirection)
                 (input ^. randomSeed . to mkStdGen)
