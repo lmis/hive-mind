@@ -190,6 +190,8 @@ data AppState = AppState {
  ,_speedSettings :: IORef SpeedSettings
  ,_hideUnseen :: !Bool
  ,_showHelp :: !Bool
+ ,_showSelectedEntities :: !Bool
+ ,_showMinimap :: !Bool
  ,_iteration :: !Int
 }
 makeLenses ''AppState
@@ -507,10 +509,12 @@ runApp (mindCommand, getMindVersionCommand') _ = do
     (Just chan)
     app
     AppState { _gameState             = startingState
-             , _renderArea            = ((-6, -10), (6, 10))
+             , _renderArea            = ((-10, -10), (10, 10))
              , _iteration             = 0
              , _hideUnseen            = False
-             , _showHelp              = False
+             , _showHelp              = True
+             , _showSelectedEntities  = False
+             , _showMinimap           = False
              , _hiveMindProcess       = hiveMindProcess'
              , _mindVersion           = mindVersion'
              , _getMindVersionCommand = getMindVersionCommand'
@@ -557,6 +561,10 @@ handleEvent :: AppState
 handleEvent s (VtyEvent (V.EvKey V.KEsc        []       )) = halt s
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = halt s
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'd') [V.MCtrl])) = halt s
+handleEvent s (VtyEvent (V.EvKey (V.KChar 'd') [])) =
+  continue $ s & showSelectedEntities %~ not
+handleEvent s (VtyEvent (V.EvKey (V.KChar 'm') [])) =
+  continue $ s & showMinimap %~ not
 handleEvent s (VtyEvent (V.EvKey (V.KChar '?') [])) =
   continue $ s & showHelp %~ not
 handleEvent s (VtyEvent (V.EvKey (V.KChar ' ') [])) = do
@@ -612,17 +620,17 @@ handleGameAdvance s = do
   continue $ s & iteration +~ 1 & gameState .~ nextState
 
 -- Rendering
-fillPosition :: Char -> [String]
-fillPosition c = replicate 3 $ replicate 5 c
-
-drawGameState :: AppState -> Widget Name
-drawGameState state =
-  let ((xLower, yLower), (xUpper, yUpper)) = state ^. renderArea
+drawGameState :: Bool -> AppState -> Widget Name
+drawGameState minimode state =
+  let ((xLower, yLower), (xUpper, yUpper)) =
+          if minimode then ((-20, -20), (20, 20)) else state ^. renderArea
   in  vBox
         [ hBox [ renderPosition (x, -y) | x <- [xLower .. xUpper] ]
         | y <- [yLower .. yUpper]
         ]
  where
+  fillPosition :: Char -> [String]
+  fillPosition c = if minimode then [[c]] else replicate 3 $ replicate 5 c
   renderPosition :: Position -> Widget Name
   renderPosition p = clickable p . str . unlines . obscureInvisible p $ maybe
     (fillPosition ' ')
@@ -660,11 +668,11 @@ drawGameState state =
     = s
   render :: EntityDetails' -> [String]
   render d = case d of
-    Nutrition    -> [" .*. ", "* * *", " '*' "]
-    HiveEntrance -> ["/---\\", "| . |", "\\---/"]
-    Pheromone    -> [" .~. ", " ~.~ ", "  ~  "]
+    Nutrition    -> if minimode then ["*"] else [" .*. ", "* * *", " '*' "]
+    HiveEntrance -> if minimode then ["O"] else ["/---\\", "| . |", "\\---/"]
+    Pheromone    -> if minimode then ["~"] else [" .~. ", " ~.~ ", "  ~  "]
     Obstacle     -> fillPosition 'X'
-    Hiveling h   -> renderHiveling h
+    Hiveling h   -> if minimode then ["H"] else renderHiveling h
   renderHiveling :: HivelingDetails -> [String]
   renderHiveling h =
     let carried = [if h ^. hasNutrition then '*' else '.']
@@ -675,9 +683,9 @@ drawGameState state =
             , "/   \\" --                 /   \
             ]
           Clockwise ->
-            [ "\\ \\/" --          \ \/
-            , " --" ++ carried --   --*
-            , "/ /\\" --           / /\
+            [ "\\ \\ /" --          \ \ /
+            , " ---" ++ carried --   ---*
+            , "/ / \\" --           / / \
             ]
           Back ->
             [ "\\   /" --                 \   /
@@ -685,9 +693,9 @@ drawGameState state =
             , "/ " ++ carried ++ " \\" -- / * \
             ]
           Counterclockwise ->
-            [ "\\\\ /" --         \\ /
-            , carried ++ "-- " -- *--
-            , "// \\" --          // \
+            [ "\\ \\ /" --         \ \ /
+            , carried ++ "--- " -- *---
+            , "/ / \\" --          / / \
             ]
 
 
@@ -722,13 +730,15 @@ helpWidget = labeledBorder "Help" $ vBox (renderCommand <$> commands)
  where
   commands :: [(String, String)]
   commands =
-    [ ("?"                      , "Toggle this panel")
+    [ ("?"                      , "Toggle this help page")
     , ("<Esc>/<Ctrl-c>/<Ctrl-d>", "Quit")
     , ("<Space>"                , "Pause / resume")
     , ("<Enter>"                , "Perform single step")
     , ("1-4"                    , "Set speed")
     , ("Arrow keys"             , "Move view")
     , ("v"                      , "Toggle visibility indication")
+    , ("d"                      , "Toggle selected entities view")
+    , ("m"                      , "Toggle minimap")
     , ("<Mouse-Left>"           , "Select entity for inspection")
     ]
   maxKeyLen :: Int
@@ -739,17 +749,18 @@ helpWidget = labeledBorder "Help" $ vBox (renderCommand <$> commands)
       <+> str explanation
 
 worldWidget :: AppState -> Widget Name
-worldWidget s = labeledBorder "World" (drawGameState s)
+worldWidget s = labeledBorder "World" (drawGameState False s)
+
+minimapWidget :: AppState -> Widget Name
+minimapWidget s = labeledBorder "Minimap" (drawGameState True s)
 
 drawUI :: AppState -> [Widget Name]
 drawUI s = [C.hCenter . labeledBorder "Hive Mind" $ page]
  where
-  page
-    | s ^. showHelp
-    = C.hCenter helpWidget
-    | otherwise
-    = C.hCenter (scoreWidget s)
-      <=> (C.hCenter (worldWidget s) <+> C.hCenter (selectedEntitiesWidget s))
+  page | s ^. showHelp             = C.hCenter helpWidget
+       | s ^. showMinimap          = C.hCenter $ minimapWidget s
+       | s ^. showSelectedEntities = C.hCenter $ selectedEntitiesWidget s
+       | otherwise = C.hCenter (scoreWidget s) <=> C.hCenter (worldWidget s)
 
 labeledBorder :: String -> Widget a -> Widget a
 labeledBorder label =
