@@ -179,6 +179,8 @@ data SpeedSettings = SpeedSettings {
 }
 makeLenses ''SpeedSettings
 
+data Page = HelpPage | SelectedEntities | Minimap | World deriving (Eq, Show, Ord)
+
 type Name = Position
 data AppEvent = AdvanceGame | CheckHotReload deriving (Eq, Show, Ord)
 data AppState = AppState {
@@ -189,9 +191,7 @@ data AppState = AppState {
  ,_getMindVersionCommand :: !String
  ,_speedSettings :: IORef SpeedSettings
  ,_hideUnseen :: !Bool
- ,_showHelp :: !Bool
- ,_showSelectedEntities :: !Bool
- ,_showMinimap :: !Bool
+ ,_currentPage :: !Page
  ,_iteration :: !Int
 }
 makeLenses ''AppState
@@ -512,9 +512,7 @@ runApp (mindCommand, getMindVersionCommand') _ = do
              , _renderArea            = ((-10, -10), (10, 10))
              , _iteration             = 0
              , _hideUnseen            = False
-             , _showHelp              = True
-             , _showSelectedEntities  = False
-             , _showMinimap           = False
+             , _currentPage           = World
              , _hiveMindProcess       = hiveMindProcess'
              , _mindVersion           = mindVersion'
              , _getMindVersionCommand = getMindVersionCommand'
@@ -561,12 +559,14 @@ handleEvent :: AppState
 handleEvent s (VtyEvent (V.EvKey V.KEsc        []       )) = halt s
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = halt s
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'd') [V.MCtrl])) = halt s
+handleEvent s (VtyEvent (V.EvKey (V.KChar 'w') [])) =
+  continue $ s & currentPage .~ World
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'd') [])) =
-  continue $ s & showSelectedEntities %~ not
+  continue $ s & currentPage .~ SelectedEntities
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'm') [])) =
-  continue $ s & showMinimap %~ not
+  continue $ s & currentPage .~ Minimap
 handleEvent s (VtyEvent (V.EvKey (V.KChar '?') [])) =
-  continue $ s & showHelp %~ not
+  continue $ s & currentPage .~ HelpPage
 handleEvent s (VtyEvent (V.EvKey (V.KChar ' ') [])) = do
   _ <- liftIO $ modifyIORef (s ^. speedSettings) (running %~ not)
   continue s
@@ -730,15 +730,16 @@ helpWidget = labeledBorder "Help" $ vBox (renderCommand <$> commands)
  where
   commands :: [(String, String)]
   commands =
-    [ ("?"                      , "Toggle this help page")
+    [ ("?"                      , "Goto this help page")
+    , ("d"                      , "Goto selected entities view")
+    , ("m"                      , "Goto minimap")
+    , ("w"                      , "Goto main page (world)")
     , ("<Esc>/<Ctrl-c>/<Ctrl-d>", "Quit")
     , ("<Space>"                , "Pause / resume")
     , ("<Enter>"                , "Perform single step")
     , ("1-4"                    , "Set speed")
     , ("Arrow keys"             , "Move view")
     , ("v"                      , "Toggle visibility indication")
-    , ("d"                      , "Toggle selected entities view")
-    , ("m"                      , "Toggle minimap")
     , ("<Mouse-Left>"           , "Select entity for inspection")
     ]
   maxKeyLen :: Int
@@ -757,10 +758,11 @@ minimapWidget s = labeledBorder "Minimap" (drawGameState True s)
 drawUI :: AppState -> [Widget Name]
 drawUI s = [C.hCenter . labeledBorder "Hive Mind" $ page]
  where
-  page | s ^. showHelp             = C.hCenter helpWidget
-       | s ^. showMinimap          = C.hCenter $ minimapWidget s
-       | s ^. showSelectedEntities = C.hCenter $ selectedEntitiesWidget s
-       | otherwise = C.hCenter (scoreWidget s) <=> C.hCenter (worldWidget s)
+  page = case s ^. currentPage of
+    HelpPage         -> C.hCenter helpWidget
+    Minimap          -> C.hCenter $ minimapWidget s
+    SelectedEntities -> C.hCenter $ selectedEntitiesWidget s
+    World            -> C.hCenter (scoreWidget s) <=> C.hCenter (worldWidget s)
 
 labeledBorder :: String -> Widget a -> Widget a
 labeledBorder label =
