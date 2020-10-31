@@ -82,7 +82,6 @@ norm (x, y) = sqrt . int2Double $ x * x + y * y
 relativePosition :: Position -> Position -> Position
 relativePosition (ox, oy) (x, y) = (x - ox, y - oy)
 
-
 distance :: Position -> Position -> Double
 distance p q = norm $ relativePosition p q
 

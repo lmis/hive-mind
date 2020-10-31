@@ -576,13 +576,16 @@ handleGameAdvance s = do
   continue $ s & iteration +~ 1 & gameState .~ nextState
 
 -- Rendering
+fillPosition :: Char -> [String]
+fillPosition c = replicate 3 $ replicate 5 c
+
 drawGameState :: AppState -> Widget Name
 drawGameState state =
   vBox [ hBox [ renderPosition (x, -y) | x <- [-10 .. 10] ] | y <- [-16 .. 16] ]
  where
   renderPosition :: Position -> Widget Name
   renderPosition p = clickable p . str . unlines . obscureInvisible p $ maybe
-    (replicate 2 "   ")
+    (fillPosition ' ')
     (^. details . to render)
     (pointsOfInterest !? p)
   pointsOfInterest :: Map Position Entity'
@@ -611,37 +614,41 @@ drawGameState state =
   noHighlightClose p = all ((> 2.5) . distance p) highlights
   obscureInvisible :: Position -> [String] -> [String]
   obscureInvisible p s
-    | state ^. hideUnseen && noHighlightClose p && noHivelingSees p = replicate
-      2
-      "???"
-    | otherwise = s
+    | state ^. hideUnseen && noHighlightClose p && noHivelingSees p
+    = fillPosition '?'
+    | otherwise
+    = s
   render :: EntityDetails -> [String]
   render d = case d of
-    Nutrition    -> [".*.", "*.*"]
-    HiveEntrance -> ["/-\\", "\\-/"]
-    Pheromone    -> [".~.", "~.~"]
-    Obstacle     -> replicate 2 "XXX"
+    Nutrition    -> [" .*. ", "* * *", " '*' "]
+    HiveEntrance -> ["/---\\", "| . |", "\\---/"]
+    Pheromone    -> [" .~. ", " ~.~ ", "  ~  "]
+    Obstacle     -> fillPosition 'X'
     Hiveling h   -> renderHiveling h
   renderHiveling :: HivelingDetails -> [String]
   renderHiveling h =
-    let carried = [if h ^. hasNutrition then '*' else ' ']
+    let carried = [if h ^. hasNutrition then '*' else '.']
     in  case h ^. orientation of
-          None             -> ["/" ++ carried ++ "\\", "/ \\"]
-          -- \**/
-          -- //\\
-          -- //\\
-          Clockwise        -> ["__ ", ">>" ++ carried]
-          -- \ \/
-          -- >>>*
-          -- / /\
-          Back             -> ["\\ /", "\\" ++ carried ++ "/"]
-          -- \\//
-          -- \\//
-          -- /**\
-          Counterclockwise -> [" __", carried ++ "<<"]
-          -- \/ /
-          -- *<<<
-          -- /\ \
+          None ->
+            [ "\\ " ++ carried ++ " /" -- \ * /
+            , "/ | \\" --                 / | \
+            , "/   \\" --                 /   \
+            ]
+          Clockwise ->
+            [ "\\ \\/" --          \ \/
+            , " --" ++ carried --   --*
+            , "/ /\\" --           / /\
+            ]
+          Back ->
+            [ "\\   /" --                 \   /
+            , "\\ | /" --                 \ | /
+            , "/ " ++ carried ++ " \\" -- / * \
+            ]
+          Counterclockwise ->
+            [ "\\\\ /" --         \\ /
+            , carried ++ "-- " -- *--
+            , "// \\" --          // \
+            ]
 
 
 scoreWidget :: AppState -> Widget Name
