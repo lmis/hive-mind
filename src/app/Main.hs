@@ -28,6 +28,7 @@ import qualified Client                         ( Input(..)
                                                 , EntityDetails'
                                                 , HivelingDetails(..)
                                                 )
+import           GHC.Float                      ( int2Double )
 import           System.Process                 ( ProcessHandle
                                                 , runInteractiveCommand
                                                 , cleanupProcess
@@ -145,6 +146,7 @@ makeLenses ''EntityBase
 
 data HivelingDetails = HivelingDetails {
   _recentDecisions :: ![Decision]
+ ,_memory128 :: !String
  ,_hasNutrition :: !Bool
  ,_spreadsPheromones :: !Bool
  ,_orientation :: !Rotation -- Rotation w.r.t North
@@ -242,6 +244,7 @@ startingState =
     ++ ((Nutrition, ) <$> nutrition)
  where
   defaultHivelingDetails = HivelingDetails { _recentDecisions   = []
+                                           , _memory128         = ""
                                            , _hasNutrition      = False
                                            , _spreadsPheromones = False
                                            , _orientation       = None
@@ -325,6 +328,14 @@ doGameStep proc state = do
 applyDecision :: GameState -> (Hiveling', Decision) -> GameState
 applyDecision state (h, decision) =
   (case decision of
+      Remember msg ->
+        state
+          &  hiveling
+          .  details
+          .  memory128
+          .~ msg
+          &  score
+          -~ round (int2Double (length msg) / 20.0)
       Turn None -> state & score -~ 1
       Turn rotation ->
         state & hiveling . details . orientation %~ addRotations rotation
@@ -409,7 +420,12 @@ getHiveMindDecision cmd input = do
   if ready
     then do
       output <- hGetLine (cmd ^. hOut)
-      return $ read output
+      let parsed = read output
+      return $ case parsed of
+        Remember msg -> if length msg > 128
+          then error "Attempting to remember too large messge"
+          else parsed
+        _            -> parsed
     else error "mind-command decision time-out"
 
 

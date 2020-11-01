@@ -21,7 +21,8 @@ data Rotation = None
               | Back
               | Counterclockwise deriving (Eq, Show, Read, Ord, Enum, Bounded)
 
-data Decision = Turn Rotation
+data Decision = Remember String
+              | Turn Rotation
               | Move
               | Pickup
               | Drop deriving (Eq, Show, Read)
