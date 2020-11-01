@@ -19,7 +19,7 @@ import           Client                         ( Entity'
                                                 , Input(..)
                                                 , closeEntities
                                                 , hasNutrition
-                                                , lastDecision
+                                                , recentDecisions
                                                 , currentHiveling
                                                 , randomSeed
                                                 )
@@ -89,9 +89,9 @@ search condition decision input
                        | x < 0       = Turn Counterclockwise
                        | otherwise   = Turn Clockwise
   randomWalk :: Decision
-  randomWalk = case input ^. currentHiveling . details . lastDecision of
-    Turn _ -> Move
-    _      -> Turn $ randomRotation input
+  randomWalk = case input ^. currentHiveling . details . recentDecisions of
+    ((Turn _) : _) -> Move
+    _              -> Turn $ randomRotation input
 
 hivelingMind :: Input -> Decision
 hivelingMind input =

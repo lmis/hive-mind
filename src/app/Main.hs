@@ -144,7 +144,7 @@ data EntityBase = EntityBase {
 makeLenses ''EntityBase
 
 data HivelingDetails = HivelingDetails {
-  _lastDecision :: !Decision
+  _recentDecisions :: ![Decision]
  ,_hasNutrition :: !Bool
  ,_spreadsPheromones :: !Bool
  ,_orientation :: !Rotation -- Rotation w.r.t North
@@ -241,7 +241,7 @@ startingState =
     ++ ((Obstacle, ) <$> sides)
     ++ ((Nutrition, ) <$> nutrition)
  where
-  defaultHivelingDetails = HivelingDetails { _lastDecision      = Wait
+  defaultHivelingDetails = HivelingDetails { _recentDecisions   = []
                                            , _hasNutrition      = False
                                            , _spreadsPheromones = False
                                            , _orientation       = None
@@ -325,9 +325,6 @@ doGameStep proc state = do
 applyDecision :: GameState -> (Hiveling', Decision) -> GameState
 applyDecision state (h, decision) =
   (case decision of
-      Wait      -> if h ^. details . spreadsPheromones
-        then state & addEntity (Pheromone, targetPos)
-        else state & score -~ 1
       Turn None -> state & score -~ 1
       Turn rotation ->
         state & hiveling . details . orientation %~ addRotations rotation
@@ -370,10 +367,14 @@ applyDecision state (h, decision) =
             &  addEntity (Nutrition, targetPos)
           else state
     )
+    &  (if h ^. details . spreadsPheromones
+         then addEntity (Pheromone, h ^. base . position)
+         else id
+       )
     &  hiveling
     .  details
-    .  lastDecision
-    .~ decision
+    .  recentDecisions
+    %~ (\ds -> decision : take 2 ds)
  where
   targetPos :: Position
   targetPos =

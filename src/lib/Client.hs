@@ -17,7 +17,7 @@ makeLenses ''EntityBase
 data HivelingDetails = HivelingDetails {
   _hasNutrition :: !Bool
  ,_spreadsPheromones :: !Bool
- ,_lastDecision :: !Decision
+ ,_recentDecisions :: ![Decision]
 } deriving (Eq, Show, Read)
 makeLenses ''HivelingDetails
 
