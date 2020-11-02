@@ -18,7 +18,7 @@ data HivelingDetails = HivelingDetails {
   _hasNutrition :: !Bool
  ,_spreadsPheromones :: !Bool
  ,_recentDecisions :: ![Decision]
- ,_memory128 :: !String
+ ,_memory :: !String
 } deriving (Eq, Show, Read)
 makeLenses ''HivelingDetails
 

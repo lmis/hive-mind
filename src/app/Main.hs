@@ -146,7 +146,7 @@ makeLenses ''EntityBase
 
 data HivelingDetails = HivelingDetails {
   _recentDecisions :: ![Decision]
- ,_memory128 :: !String
+ ,_memory :: !String
  ,_hasNutrition :: !Bool
  ,_spreadsPheromones :: !Bool
  ,_orientation :: !Rotation -- Rotation w.r.t North
@@ -244,7 +244,7 @@ startingState =
     ++ ((Nutrition, ) <$> nutrition)
  where
   defaultHivelingDetails = HivelingDetails { _recentDecisions   = []
-                                           , _memory128         = ""
+                                           , _memory            = ""
                                            , _hasNutrition      = False
                                            , _spreadsPheromones = False
                                            , _orientation       = None
@@ -296,29 +296,33 @@ doGameStep proc state = do
     return (hiveling, decision)
   hivelingWithClientTypes :: Hiveling'
                           -> Entity Client.EntityBase Client.HivelingDetails
-  hivelingWithClientTypes Entity { _base = EntityBase {..}, _details = HivelingDetails {..} }
-    = Entity { _base    = Client.EntityBase { .. }
-             , _details = Client.HivelingDetails { .. }
-             }
+  hivelingWithClientTypes h =
+    h
+      &  base
+      %~ (\EntityBase {..} -> Client.EntityBase { .. })
+      &  details
+      %~ \HivelingDetails {..} -> Client.HivelingDetails { .. }
   forHivelingMind :: Hiveling'
                   -> Entity EntityBase EntityDetails'
                   -> Entity Client.EntityBase Client.EntityDetails'
-  forHivelingMind hiveling Entity { _base = EntityBase { _position, ..}, _details }
-    = Entity
-      { _base    = Client.EntityBase
-        { _position =
-          inverseRotatePosition (hiveling ^. details . orientation)
-            $ relativePosition (hiveling ^. base . position) _position
-        , ..
-        }
-      , _details = case _details of
-                     Hiveling HivelingDetails {..} ->
-                       Hiveling Client.HivelingDetails { .. }
-                     Nutrition    -> Nutrition
-                     Obstacle     -> Obstacle
-                     HiveEntrance -> HiveEntrance
-                     Pheromone    -> Pheromone
-      }
+  forHivelingMind h e =
+    e
+      &  base
+      %~ (\EntityBase {..} -> Client.EntityBase
+           { _position =
+             inverseRotatePosition (h ^. details . orientation)
+               $ relativePosition (h ^. base . position) (e ^. base . position)
+           , ..
+           }
+         )
+      &  details
+      .~ case e ^. details of
+           Hiveling HivelingDetails {..} ->
+             Hiveling Client.HivelingDetails { .. }
+           Nutrition    -> Nutrition
+           Obstacle     -> Obstacle
+           HiveEntrance -> HiveEntrance
+           Pheromone    -> Pheromone
   inverseRotatePosition :: Rotation -> Position -> Position
   inverseRotatePosition None             p      = p
   inverseRotatePosition Clockwise        (x, y) = (-y, x)
@@ -328,11 +332,11 @@ doGameStep proc state = do
 applyDecision :: GameState -> (Hiveling', Decision) -> GameState
 applyDecision state (h, decision) =
   (case decision of
-      Remember msg ->
+      Remember128Characters msg ->
         state
           &  hiveling
           .  details
-          .  memory128
+          .  memory
           .~ msg
           &  score
           -~ round (int2Double (length msg) / 20.0)
@@ -422,10 +426,10 @@ getHiveMindDecision cmd input = do
       output <- hGetLine (cmd ^. hOut)
       let parsed = read output
       return $ case parsed of
-        Remember msg -> if length msg > 128
+        Remember128Characters msg -> if length msg > 128
           then error "Attempting to remember too large messge"
           else parsed
-        _            -> parsed
+        _                         -> parsed
     else error "mind-command decision time-out"
 
 
