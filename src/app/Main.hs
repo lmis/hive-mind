@@ -21,6 +21,7 @@ import           Common                         ( Entity(..)
                                                 , relativePosition
                                                 , Decision(..)
                                                 , hPrintFlush
+                                                , generatorList
                                                 , readCommand
                                                 )
 import qualified Client                         ( Input(..)
@@ -112,7 +113,6 @@ import           Brick.BChan                    ( BChan
                                                 , writeBChan
                                                 )
 import           System.Random                  ( StdGen
-                                                , split
                                                 , mkStdGen
                                                 , next
                                                 )
@@ -260,21 +260,18 @@ sees h p = distance p (h ^. base . position) < 6
 
 doGameStep :: InteractiveCommand -> GameState -> IO GameState
 doGameStep proc state = do
-  let (g, g')           = split $ state ^. randomGen
-  let shuffledHivelings = shuffle' hivelings (length hivelings) g
+  let (g : g' : generators) = generatorList $ state ^. randomGen
+  let shuffledHivelings     = shuffle' hivelings (length hivelings) g
 
-  stdGenRef             <- newIORef g'
-  hivelingsWithDecision <- mapM (takeDecision stdGenRef) shuffledHivelings
-  g''                   <- readIORef stdGenRef
+  hivelingsWithDecision <- mapM takeDecision $ zip generators shuffledHivelings
 
-  return $ foldl' applyDecision (state & randomGen .~ g'') hivelingsWithDecision
+  return $ foldl' applyDecision (state & randomGen .~ g') hivelingsWithDecision
  where
   hivelings :: [Hiveling']
   hivelings = state ^.. entities . each . asHiveling
-  takeDecision :: IORef StdGen -> Hiveling' -> IO (Hiveling', Decision)
-  takeDecision stdGenRef hiveling = do
-    g <- readIORef stdGenRef
-    let (r, g') = next g
+  takeDecision :: (StdGen, Hiveling') -> IO (Hiveling', Decision)
+  takeDecision (g, hiveling) = do
+    let (r, _) = next g
     decision <- getHiveMindDecision
       proc
       Client.Input
@@ -292,7 +289,6 @@ doGameStep proc state = do
         , _currentHiveling = hivelingWithClientTypes hiveling
         , _randomSeed      = r
         }
-    writeIORef stdGenRef g'
     return (hiveling, decision)
   hivelingWithClientTypes :: Hiveling'
                           -> Entity Client.EntityBase Client.HivelingDetails

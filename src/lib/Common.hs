@@ -9,6 +9,9 @@ import           System.IO                      ( Handle
 import           System.Process                 ( runInteractiveCommand
                                                 , waitForProcess
                                                 )
+import           System.Random                  ( StdGen
+                                                , split
+                                                )
 import           GHC.Float                      ( int2Double )
 import           Control.Lens                   ( makeLenses
                                                 , makePrisms
@@ -67,3 +70,8 @@ readCommand cmd = do
   v                   <- hGetContents hOut
   _                   <- waitForProcess hProc
   return v
+
+-- Generator
+generatorList :: StdGen -> [StdGen]
+generatorList g = let (g', g'') = split g in g' : generatorList g''
+
