@@ -56,6 +56,7 @@ import           System.Random.Shuffle          ( shuffle' )
 import           Text.Pretty.Simple             ( pShowNoColor )
 import           Data.Text.Lazy                 ( Text
                                                 , toStrict
+                                                , unpack
                                                 )
 import           Data.IORef                     ( IORef
                                                 , readIORef
@@ -181,12 +182,13 @@ data SpeedSettings = SpeedSettings {
 }
 makeLenses ''SpeedSettings
 
-data Page = HelpPage | SelectedEntities | Minimap | World deriving (Eq, Show, Ord)
+data Page = HelpPage | SelectedEntities | Minimap | World | Logs deriving (Eq, Show, Ord)
 
 type Name = Position
 data AppEvent = AdvanceGame | CheckHotReload deriving (Eq, Show, Ord)
 data AppState = AppState {
   _gameState :: !GameState
+ ,_gameLogs :: [String]
  ,_renderArea :: !(Position, Position)
  ,_hiveMindProcess :: !InteractiveCommand
  ,_mindVersion :: !String
@@ -258,23 +260,23 @@ startingState =
 sees :: Entity EntityBase d -> Position -> Bool
 sees h p = distance p (h ^. base . position) < 6
 
-doGameStep :: InteractiveCommand -> GameState -> IO GameState
+doGameStep :: InteractiveCommand -> GameState -> IO (GameState, [String])
 doGameStep proc state = do
   let (g : g' : generators) = generatorList $ state ^. randomGen
   let shuffledHivelings     = shuffle' hivelings (length hivelings) g
 
-  hivelingsWithDecision <- mapM takeDecision $ zip generators shuffledHivelings
+  decisionsWithMetadata <- mapM takeDecision $ zip generators shuffledHivelings
 
-  return $ foldl' applyDecision (state & randomGen .~ g') hivelingsWithDecision
+  return
+    $ foldl' applyDecision (state & randomGen .~ g', []) decisionsWithMetadata
  where
   hivelings :: [Hiveling']
   hivelings = state ^.. entities . each . asHiveling
-  takeDecision :: (StdGen, Hiveling') -> IO (Hiveling', Decision)
+  takeDecision :: (StdGen, Hiveling') -> IO (Decision, Hiveling', Client.Input)
   takeDecision (g, hiveling) = do
-    let (r, _) = next g
-    decision <- getHiveMindDecision
-      proc
-      Client.Input
+    let
+      (r, _) = next g
+      input  = Client.Input
         { _closeEntities   =
           state
           ^.. entities
@@ -289,7 +291,8 @@ doGameStep proc state = do
         , _currentHiveling = hivelingWithClientTypes hiveling
         , _randomSeed      = r
         }
-    return (hiveling, decision)
+    decision <- getHiveMindDecision proc input
+    return (decision, hiveling, input)
   hivelingWithClientTypes :: Hiveling'
                           -> Entity Client.EntityBase Client.HivelingDetails
   hivelingWithClientTypes h =
@@ -325,9 +328,12 @@ doGameStep proc state = do
   inverseRotatePosition Counterclockwise (x, y) = (y, -x)
   inverseRotatePosition Back             (x, y) = (-x, -y)
 
-applyDecision :: GameState -> (Hiveling', Decision) -> GameState
-applyDecision state (h, decision) =
-  (case decision of
+-- TODO state monad
+applyDecision :: (GameState, [String])
+              -> (Decision, Hiveling', Client.Input)
+              -> (GameState, [String])
+applyDecision (state, logs) (decision, h, input) =
+  ( (case decision of
       Remember128Characters msg ->
         state
           &  hiveling
@@ -354,14 +360,20 @@ applyDecision state (h, decision) =
         Just (Entity _ Nutrition) -> if h ^. details . hasNutrition
           then state
           else
-            state & hiveling . details . hasNutrition .~ True & entities %~ filter
-              (\e ->
-                Just (e ^. base . identifier)
-                  /= topEntityAtTarget
-                  ^? _Just
-                  .  base
-                  .  identifier
-              )
+            state
+            &  hiveling
+            .  details
+            .  hasNutrition
+            .~ True
+            &  entities
+            %~ filter
+                 (\e ->
+                   Just (e ^. base . identifier)
+                     /= topEntityAtTarget
+                     ^? _Just
+                     .  base
+                     .  identifier
+                 )
         _                         -> state
       Drop   -> case topEntityAtTarget of
         Just (Entity _ HiveEntrance) -> if h ^. details . hasNutrition
@@ -386,6 +398,11 @@ applyDecision state (h, decision) =
     .  details
     .  recentDecisions
     %~ (\ds -> decision : take 2 ds)
+  , [ "< " ++ (unpack . pShowNoColor $ decision)
+    , "> " ++ (unpack . pShowNoColor $ input)
+    ]
+    ++ logs
+  )
  where
   targetPos :: Position
   targetPos =
@@ -525,16 +542,20 @@ runApp (mindCommand, getMindVersionCommand') _ = do
     buildVty
     (Just chan)
     app
-    AppState { _gameState             = startingState
-             , _renderArea            = ((-10, -10), (10, 10))
-             , _iteration             = 0
-             , _hideUnseen            = False
-             , _currentPage           = World
-             , _hiveMindProcess       = hiveMindProcess'
-             , _mindVersion           = mindVersion'
-             , _getMindVersionCommand = getMindVersionCommand'
-             , _speedSettings         = speedSettings'
-             }
+    AppState
+      { _gameState             = startingState
+      , _gameLogs              = [ "Version: " ++ mindVersion'
+                                 , "Started mind-command: " ++ mindCommand
+                                 ]
+      , _renderArea            = ((-10, -10), (10, 10))
+      , _iteration             = 0
+      , _hideUnseen            = False
+      , _currentPage           = World
+      , _hiveMindProcess       = hiveMindProcess'
+      , _mindVersion           = mindVersion'
+      , _getMindVersionCommand = getMindVersionCommand'
+      , _speedSettings         = speedSettings'
+      }
  where
   buildVty = do
     vty <- V.mkVty V.defaultConfig
@@ -578,6 +599,8 @@ handleEvent s (VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = halt s
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'd') [V.MCtrl])) = halt s
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'w') [])) =
   continue $ s & currentPage .~ World
+handleEvent s (VtyEvent (V.EvKey (V.KChar 'l') [])) =
+  continue $ s & currentPage .~ Logs
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'd') [])) =
   continue $ s & currentPage .~ SelectedEntities
 handleEvent s (VtyEvent (V.EvKey (V.KChar 'm') [])) =
@@ -616,11 +639,15 @@ handleEvent s (AppEvent CheckHotReload) = do
     then continue s
     else do
       p <- liftIO restartMind
-      continue $ s { _gameState       = startingState
-                   , _hiveMindProcess = p
-                   , _mindVersion     = currentVersion
-                   , _iteration       = 0
-                   }
+      continue $ s
+        { _gameState       = startingState
+        , _gameLogs = ["Version: " ++ currentVersion, "Restarting mind-command"]
+                      ++ s
+                      ^. gameLogs
+        , _hiveMindProcess = p
+        , _mindVersion     = currentVersion
+        , _iteration       = 0
+        }
  where
   restartMind = do
     speedSettings' <- readIORef (s ^. speedSettings)
@@ -633,8 +660,9 @@ handleEvent s _                      = continue s
 
 handleGameAdvance :: AppState -> EventM Name (Next AppState)
 handleGameAdvance s = do
-  nextState <- liftIO $ doGameStep (s ^. hiveMindProcess) (s ^. gameState)
-  continue $ s & iteration +~ 1 & gameState .~ nextState
+  (nextState, logs) <- liftIO
+    $ doGameStep (s ^. hiveMindProcess) (s ^. gameState)
+  continue $ s & iteration +~ 1 & gameState .~ nextState & gameLogs %~ (logs ++)
 
 -- Rendering
 drawGameState :: Bool -> AppState -> Widget Name
@@ -751,6 +779,7 @@ helpWidget = labeledBorder "Help" $ vBox (renderCommand <$> commands)
     , ("d"                      , "Goto selected entities view")
     , ("m"                      , "Goto minimap")
     , ("w"                      , "Goto main page (world)")
+    , ("l"                      , "Goto logs")
     , ("<Esc>/<Ctrl-c>/<Ctrl-d>", "Quit")
     , ("<Space>"                , "Pause / resume")
     , ("<Enter>"                , "Perform single step")
@@ -766,6 +795,13 @@ helpWidget = labeledBorder "Help" $ vBox (renderCommand <$> commands)
     = str (key ++ replicate (maxKeyLen - length key + 2) ' ')
       <+> str explanation
 
+-- TODO: Scrolling,  clean button, fixed with?
+logsWidget :: AppState -> Widget Name
+logsWidget s = labeledBorder "Logs" $ vBox (str <$> zipWith (++) prefixes logs)
+ where
+  logs     = s ^. gameLogs
+  prefixes = (++ ": ") . show <$> [length logs, length logs - 1 .. 0]
+
 worldWidget :: AppState -> Widget Name
 worldWidget s = labeledBorder "World" (drawGameState False s)
 
@@ -780,6 +816,7 @@ drawUI s = [C.hCenter . labeledBorder "Hive Mind" $ page]
     Minimap          -> C.hCenter $ minimapWidget s
     SelectedEntities -> C.hCenter $ selectedEntitiesWidget s
     World            -> C.hCenter (scoreWidget s) <=> C.hCenter (worldWidget s)
+    Logs             -> C.hCenter $ logsWidget s
 
 labeledBorder :: String -> Widget a -> Widget a
 labeledBorder label =
