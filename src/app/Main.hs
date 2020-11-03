@@ -55,7 +55,6 @@ import           System.Environment             ( getArgs )
 import           System.Random.Shuffle          ( shuffle' )
 import           Text.Pretty.Simple             ( pShowNoColor )
 import           Data.Text.Lazy                 ( Text
-                                                , toStrict
                                                 , unpack
                                                 )
 import           Data.IORef                     ( IORef
@@ -102,7 +101,6 @@ import           Brick                          ( App(..)
                                                 , hBox
                                                 , withBorderStyle
                                                 , str
-                                                , txt
                                                 , padLeftRight
                                                 )
 import qualified Brick.Widgets.Center          as C
@@ -665,6 +663,12 @@ handleGameAdvance s = do
   continue $ s & iteration +~ 1 & gameState .~ nextState & gameLogs %~ (logs ++)
 
 -- Rendering
+padCenterTo :: Int -> String -> String
+padCenterTo n s = padRightTo n $ replicate half ' ' ++ s
+  where half = round (int2Double (n - length s) / 2.0)
+padRightTo :: Int -> String -> String
+padRightTo n s = s ++ replicate (n - length s) ' '
+
 drawGameState :: Bool -> AppState -> Widget Name
 drawGameState minimode state =
   let ((xLower, yLower), (xUpper, yUpper)) =
@@ -746,11 +750,18 @@ drawGameState minimode state =
 
 scoreWidget :: AppState -> Widget Name
 scoreWidget s =
-  labeledBorder "Score" $ padLeftRight 5 . str . show $ s ^. gameState . score
+  labeledBorder "Score"
+    $  padLeftRight 1
+    .  str
+    .  padCenterTo 18
+    .  show
+    $  s
+    ^. gameState
+    .  score
 
 selectedEntitiesWidget :: AppState -> Widget Name
 selectedEntitiesWidget s = labeledBorder "Selected" $ if null highlights
-  then padLeftRight 10 $ str "Nothing selected"
+  then str $ padCenterTo 20 "Nothing selected"
   else vBox (highlightBox <$> highlights)
  where
   highlights :: [Entity']
@@ -761,8 +772,9 @@ selectedEntitiesWidget s = labeledBorder "Selected" $ if null highlights
   highlightBox e =
     C.hCenter
       $ labeledBorder (e ^. base . position . to (\(x, y) -> (x, -y)) . to show)
-      .  txt
-      .  toStrict
+      .  str
+      .  padCenterTo 20
+      .  unpack
       .  info
       $  e
       ^. details
@@ -791,13 +803,13 @@ helpWidget = labeledBorder "Help" $ vBox (renderCommand <$> commands)
   maxKeyLen :: Int
   maxKeyLen = maximum (length . fst <$> commands)
   renderCommand :: (String, String) -> Widget Name
-  renderCommand (key, explanation)
-    = str (key ++ replicate (maxKeyLen - length key + 2) ' ')
-      <+> str explanation
+  renderCommand (key, explanation) =
+    str (padRightTo (maxKeyLen + 2) key) <+> str explanation
 
--- TODO: Scrolling,  clean button, fixed with?
 logsWidget :: AppState -> Widget Name
-logsWidget s = labeledBorder "Logs" $ vBox (str <$> zipWith (++) prefixes logs)
+logsWidget s =
+  labeledBorder "Logs"
+    $ vBox (str . padRightTo 50 <$> zipWith (++) prefixes logs)
  where
   logs     = s ^. gameLogs
   prefixes = (++ ": ") . show <$> [length logs, length logs - 1 .. 0]
