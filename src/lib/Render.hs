@@ -1,9 +1,3 @@
-{-# LANGUAGE
-   RankNTypes
-  ,TupleSections
-  ,RecordWildCards
-  ,NamedFieldPuns
-  ,TemplateHaskell #-}
 module Render
   ( drawUI
   )

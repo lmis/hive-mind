@@ -1,11 +1,7 @@
-{-# LANGUAGE
-   RankNTypes
-  ,TupleSections
-  ,RecordWildCards
-  ,NamedFieldPuns
-  ,TemplateHaskell #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Types where
 
+import           InteractiveCommand             ( InteractiveCommand )
 import           Common                         ( Entity(..)
                                                 , base
                                                 , details
@@ -15,8 +11,6 @@ import           Common                         ( Entity(..)
                                                 , Rotation(..)
                                                 , Decision(..)
                                                 )
-import           System.Process                 ( ProcessHandle )
-import           System.IO                      ( Handle )
 import           Data.IORef                     ( IORef )
 import           System.Random                  ( StdGen )
 import           Control.Lens                   ( Prism'
@@ -54,15 +48,6 @@ data GameState = GameState {
 } deriving (Show)
 makeLenses ''GameState
 
-data InteractiveCommand = InteractiveCommand {
-  _command :: !String
- ,_startupTimeout :: !Int
- ,_hIn :: Handle
- ,_hOut :: Handle
- ,_hErr :: Handle
- ,_hProc :: ProcessHandle
-}
-makeLenses ''InteractiveCommand
 
 data SpeedSettings = SpeedSettings {
   _running :: !Bool

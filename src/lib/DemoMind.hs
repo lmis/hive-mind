@@ -1,5 +1,4 @@
-{-# LANGUAGE
-   RankNTypes #-}
+{-# LANGUAGE RankNTypes #-}
 module DemoMind
   ( runDemo
   , hivelingMind

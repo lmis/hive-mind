@@ -1,9 +1,4 @@
-{-# LANGUAGE
-   RankNTypes
-  ,TupleSections
-  ,RecordWildCards
-  ,NamedFieldPuns
-  ,TemplateHaskell #-}
+{-# LANGUAGE TupleSections, RecordWildCards #-}
 module Main
   ( main
   )
@@ -20,7 +15,6 @@ import           Types                          ( AppEvent(..)
                                                 , asHiveling
                                                 , HivelingDetails(..)
                                                 , Hiveling'
-                                                , InteractiveCommand(..)
                                                 , sees
                                                 , SpeedSettings(..)
                                                 , nextId
@@ -35,12 +29,6 @@ import           Types                          ( AppEvent(..)
                                                 , hasNutrition
                                                 , spreadsPheromones
                                                 , recentDecisions
-                                                , hIn
-                                                , hOut
-                                                , hErr
-                                                , hProc
-                                                , startupTimeout
-                                                , command
                                                 , running
                                                 , delay
                                                 , speedSettings
@@ -56,6 +44,12 @@ import           Types                          ( AppEvent(..)
                                                 , hiveMindProcess
                                                 , iteration
                                                 , hideUnseen
+                                                )
+import           InteractiveCommand             ( InteractiveCommand
+                                                , start
+                                                , restart
+                                                , hIn
+                                                , hOut
                                                 )
 import           Render                         ( drawUI )
 import           Common                         ( Entity(..)
@@ -77,11 +71,7 @@ import qualified Client                         ( Input(..)
                                                 , HivelingDetails(..)
                                                 )
 import           GHC.Float                      ( int2Double )
-import           System.Process                 ( runInteractiveCommand
-                                                , cleanupProcess
-                                                )
 import           System.IO                      ( stderr
-                                                , hSetBinaryMode
                                                 , hPutStrLn
                                                 , hGetLine
                                                 , hWaitForInput
@@ -441,31 +431,6 @@ main = do
   failure errors = do
     hPutStrLn stderr (unlines $ errors ++ [usageInfo header flags])
     exitWith (ExitFailure 1)
-
-start :: Int -> String -> IO InteractiveCommand
-start startupTimeout' command' = do
-  (hIn', hOut', hErr', hProc') <- runInteractiveCommand command'
-  _                            <- hSetBinaryMode hIn' False
-  _                            <- hSetBinaryMode hOut' False
-  ready                        <- hWaitForInput hOut' startupTimeout'
-  if ready then void $ hGetLine hOut' else error $ command' ++ " start time-out"
-
-  return InteractiveCommand { _command        = command'
-                            , _startupTimeout = startupTimeout'
-                            , _hIn            = hIn'
-                            , _hOut           = hOut'
-                            , _hErr           = hErr'
-                            , _hProc          = hProc'
-                            }
-
-kill :: InteractiveCommand -> IO ()
-kill cmd = cleanupProcess
-  (Just $ cmd ^. hIn, Just $ cmd ^. hOut, Just $ cmd ^. hErr, cmd ^. hProc)
-
-restart :: InteractiveCommand -> IO InteractiveCommand
-restart p = do
-  kill p
-  start (p ^. startupTimeout) $ p ^. command
 
 runApp :: (String, String) -> [Flag] -> IO ()
 runApp (mindCommand, getMindVersionCommand') _ = do
