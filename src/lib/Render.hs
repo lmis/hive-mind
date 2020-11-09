@@ -6,9 +6,14 @@ where
 import           Types                          ( AppState
                                                 , renderArea
                                                 , gameState
-                                                , entities
-                                                , position
                                                 , Name
+                                                , gameLogs
+                                                , Page(..)
+                                                , currentPage
+                                                , hideUnseen
+                                                )
+import           Game                           ( entities
+                                                , position
                                                 , Entity'
                                                 , Hiveling'
                                                 , EntityDetails'
@@ -16,14 +21,10 @@ import           Types                          ( AppState
                                                 , highlighted
                                                 , asHiveling
                                                 , sees
-                                                , hideUnseen
                                                 , hasNutrition
                                                 , orientation
                                                 , score
-                                                , gameLogs
-                                                , currentPage
                                                 , HivelingDetails
-                                                , Page(..)
                                                 )
 import           Common                         ( base
                                                 , details

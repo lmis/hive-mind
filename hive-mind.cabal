@@ -8,6 +8,7 @@ library
     DemoMind
     Common
     Client
+    Game
     InteractiveCommand
     Render
     Types

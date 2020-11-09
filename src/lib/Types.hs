@@ -2,52 +2,10 @@
 module Types where
 
 import           InteractiveCommand             ( InteractiveCommand )
-import           Common                         ( Entity(..)
-                                                , base
-                                                , details
-                                                , distance
-                                                , EntityDetails(..)
-                                                , Position
-                                                , Rotation(..)
-                                                , Decision(..)
-                                                )
+import           Game                           ( GameState )
+import           Common                         ( Position )
 import           Data.IORef                     ( IORef )
-import           System.Random                  ( StdGen )
-import           Control.Lens                   ( Prism'
-                                                , prism
-                                                , (^.)
-                                                , makeLenses
-                                                )
-
-data EntityBase = EntityBase {
-  _identifier :: !Int
- ,_position :: !Position
- ,_zIndex :: !Int
- ,_highlighted :: !Bool
-} deriving (Eq, Show, Read)
-makeLenses ''EntityBase
-
-data HivelingDetails = HivelingDetails {
-  _recentDecisions :: ![Decision]
- ,_memory :: !String
- ,_hasNutrition :: !Bool
- ,_spreadsPheromones :: !Bool
- ,_orientation :: !Rotation -- Rotation w.r.t North
-} deriving (Eq, Show, Read)
-makeLenses ''HivelingDetails
-
-type EntityDetails' = EntityDetails HivelingDetails
-type Entity' = Entity EntityBase EntityDetails'
-type Hiveling' = Entity EntityBase HivelingDetails
-
-data GameState = GameState {
-  _entities :: [Entity']
- ,_nextId :: !Int
- ,_score :: !Int
- ,_randomGen :: StdGen
-} deriving (Show)
-makeLenses ''GameState
-
+import           Control.Lens                   ( makeLenses )
 
 data SpeedSettings = SpeedSettings {
   _running :: !Bool
@@ -72,16 +30,3 @@ data AppState = AppState {
  ,_iteration :: !Int
 }
 makeLenses ''AppState
-
--- Traversals & Utils
-asHiveling :: Prism' Entity' Hiveling'
-asHiveling = prism collapse refine
- where
-  collapse :: Hiveling' -> Entity'
-  collapse h = Entity { _base = h ^. base, _details = Hiveling $ h ^. details }
-  refine :: Entity' -> Either Entity' Hiveling'
-  refine (Entity b (Hiveling d)) = Right $ Entity b d
-  refine e                       = Left e
-
-sees :: Entity EntityBase d -> Position -> Bool
-sees h p = distance p (h ^. base . position) < 6
