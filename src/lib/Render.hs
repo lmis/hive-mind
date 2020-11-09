@@ -3,7 +3,7 @@ module Render
   )
 where
 
-import           Types                          ( AppState
+import           App                            ( AppState
                                                 , renderArea
                                                 , gameState
                                                 , Name
