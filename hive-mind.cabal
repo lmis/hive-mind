@@ -8,12 +8,16 @@ library
     DemoMind
     Common
     Client
+    Render
+    Types
   hs-source-dirs:
     src/lib
   ghc-options: -Wall -O2 -threaded
   build-depends:       base
                       ,containers
+                      ,brick
                       ,safe
+                      ,pretty-simple
                       ,process
                       ,raw-strings-qq
                       ,text

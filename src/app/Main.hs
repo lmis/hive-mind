@@ -10,6 +10,54 @@ module Main
 where
 
 import           DemoMind                       ( runDemo )
+import           Types                          ( AppEvent(..)
+                                                , Name
+                                                , AppState(..)
+                                                , GameState(..)
+                                                , Entity'
+                                                , EntityBase(..)
+                                                , EntityDetails'
+                                                , asHiveling
+                                                , HivelingDetails(..)
+                                                , Hiveling'
+                                                , InteractiveCommand(..)
+                                                , sees
+                                                , SpeedSettings(..)
+                                                , nextId
+                                                , entities
+                                                , position
+                                                , randomGen
+                                                , identifier
+                                                , orientation
+                                                , memory
+                                                , score
+                                                , zIndex
+                                                , hasNutrition
+                                                , spreadsPheromones
+                                                , recentDecisions
+                                                , hIn
+                                                , hOut
+                                                , hErr
+                                                , hProc
+                                                , startupTimeout
+                                                , command
+                                                , running
+                                                , delay
+                                                , speedSettings
+                                                , Page(..)
+                                                , currentPage
+                                                , renderArea
+                                                , hideUnseen
+                                                , gameState
+                                                , highlighted
+                                                , getMindVersionCommand
+                                                , mindVersion
+                                                , gameLogs
+                                                , hiveMindProcess
+                                                , iteration
+                                                , hideUnseen
+                                                )
+import           Render                         ( drawUI )
 import           Common                         ( Entity(..)
                                                 , base
                                                 , details
@@ -17,7 +65,6 @@ import           Common                         ( Entity(..)
                                                 , Position
                                                 , Rotation(..)
                                                 , addRotations
-                                                , distance
                                                 , relativePosition
                                                 , Decision(..)
                                                 , hPrintFlush
@@ -30,12 +77,10 @@ import qualified Client                         ( Input(..)
                                                 , HivelingDetails(..)
                                                 )
 import           GHC.Float                      ( int2Double )
-import           System.Process                 ( ProcessHandle
-                                                , runInteractiveCommand
+import           System.Process                 ( runInteractiveCommand
                                                 , cleanupProcess
                                                 )
-import           System.IO                      ( Handle
-                                                , stderr
+import           System.IO                      ( stderr
                                                 , hSetBinaryMode
                                                 , hPutStrLn
                                                 , hGetLine
@@ -54,9 +99,7 @@ import           System.Console.GetOpt          ( OptDescr(..)
 import           System.Environment             ( getArgs )
 import           System.Random.Shuffle          ( shuffle' )
 import           Text.Pretty.Simple             ( pShowNoColor )
-import           Data.Text.Lazy                 ( Text
-                                                , unpack
-                                                )
+import           Data.Text.Lazy                 ( unpack )
 import           Data.IORef                     ( IORef
                                                 , readIORef
                                                 , modifyIORef
@@ -64,17 +107,9 @@ import           Data.IORef                     ( IORef
                                                 , writeIORef
                                                 )
 import           Safe.Foldable                  ( maximumByMay )
-import           Data.Ord                       ( Down(..)
-                                                , comparing
-                                                )
+import           Data.Ord                       ( comparing )
 import           Data.List                      ( find
-                                                , maximumBy
-                                                , sortOn
                                                 , foldl'
-                                                )
-import           Data.Map.Strict                ( Map
-                                                , (!?)
-                                                , fromListWith
                                                 )
 import           Control.Monad.IO.Class         ( liftIO )
 import           Control.Monad                  ( forever
@@ -88,25 +123,13 @@ import           Brick                          ( App(..)
                                                 , BrickEvent(..)
                                                 , EventM
                                                 , Next
-                                                , Widget
                                                 , customMain
                                                 , neverShowCursor
                                                 , continue
                                                 , halt
-                                                , clickable
                                                 , attrMap
-                                                , (<+>)
-                                                , (<=>)
-                                                , vBox
-                                                , hBox
-                                                , withBorderStyle
-                                                , str
-                                                , padLeftRight
                                                 )
-import qualified Brick.Widgets.Center          as C
 import qualified Graphics.Vty                  as V
-import qualified Brick.Widgets.Border          as B
-import qualified Brick.Widgets.Border.Style    as BS
 import           Brick.BChan                    ( BChan
                                                 , newBChan
                                                 , writeBChan
@@ -116,8 +139,6 @@ import           System.Random                  ( StdGen
                                                 , next
                                                 )
 import           Control.Lens                   ( ASetter'
-                                                , Prism'
-                                                , prism
                                                 , (&)
                                                 , (^.)
                                                 , (^..)
@@ -132,81 +153,7 @@ import           Control.Lens                   ( ASetter'
                                                 , _Just
                                                 , _1
                                                 , _2
-                                                , makeLenses
                                                 )
-
-data EntityBase = EntityBase {
-  _identifier :: !Int
- ,_position :: !Position
- ,_zIndex :: !Int
- ,_highlighted :: !Bool
-} deriving (Eq, Show, Read)
-makeLenses ''EntityBase
-
-data HivelingDetails = HivelingDetails {
-  _recentDecisions :: ![Decision]
- ,_memory :: !String
- ,_hasNutrition :: !Bool
- ,_spreadsPheromones :: !Bool
- ,_orientation :: !Rotation -- Rotation w.r.t North
-} deriving (Eq, Show, Read)
-makeLenses ''HivelingDetails
-
-type EntityDetails' = EntityDetails HivelingDetails
-type Entity' = Entity EntityBase EntityDetails'
-type Hiveling' = Entity EntityBase HivelingDetails
-
-data GameState = GameState {
-  _entities :: [Entity']
- ,_nextId :: !Int
- ,_score :: !Int
- ,_randomGen :: StdGen
-} deriving (Show)
-makeLenses ''GameState
-
-data InteractiveCommand = InteractiveCommand {
-  _command :: !String
- ,_startupTimeout :: !Int
- ,_hIn :: Handle
- ,_hOut :: Handle
- ,_hErr :: Handle
- ,_hProc :: ProcessHandle
-}
-makeLenses ''InteractiveCommand
-
-data SpeedSettings = SpeedSettings {
-  _running :: !Bool
- ,_delay :: !Int
-}
-makeLenses ''SpeedSettings
-
-data Page = HelpPage | SelectedEntities | Minimap | World | Logs deriving (Eq, Show, Ord)
-
-type Name = Position
-data AppEvent = AdvanceGame | CheckHotReload deriving (Eq, Show, Ord)
-data AppState = AppState {
-  _gameState :: !GameState
- ,_gameLogs :: [String]
- ,_renderArea :: !(Position, Position)
- ,_hiveMindProcess :: !InteractiveCommand
- ,_mindVersion :: !String
- ,_getMindVersionCommand :: !String
- ,_speedSettings :: IORef SpeedSettings
- ,_hideUnseen :: !Bool
- ,_currentPage :: !Page
- ,_iteration :: !Int
-}
-makeLenses ''AppState
-
--- Traversals & Utils
-asHiveling :: Prism' Entity' Hiveling'
-asHiveling = prism collapse refine
- where
-  collapse :: Hiveling' -> Entity'
-  collapse h = Entity { _base = h ^. base, _details = Hiveling $ h ^. details }
-  refine :: Entity' -> Either Entity' Hiveling'
-  refine (Entity b (Hiveling d)) = Right $ Entity b d
-  refine e                       = Left e
 
 -- Game init & advancing
 addEntity :: (EntityDetails', Position) -> GameState -> GameState
@@ -254,9 +201,6 @@ startingState =
   topAndBottom           = (,) <$> [-9 .. 9] <*> [-16, 16]
   sides                  = (,) <$> [-10, 10] <*> [-16 .. 16]
   nutrition              = (,) <$> [-5 .. 5] <*> [-15, -14, 0, 14, 15]
-
-sees :: Entity EntityBase d -> Position -> Bool
-sees h p = distance p (h ^. base . position) < 6
 
 doGameStep :: InteractiveCommand -> GameState -> IO (GameState, [String])
 doGameStep proc state = do
@@ -661,175 +605,3 @@ handleGameAdvance s = do
   (nextState, logs) <- liftIO
     $ doGameStep (s ^. hiveMindProcess) (s ^. gameState)
   continue $ s & iteration +~ 1 & gameState .~ nextState & gameLogs %~ (logs ++)
-
--- Rendering
-padCenterTo :: Int -> String -> String
-padCenterTo n s = padRightTo n $ replicate half ' ' ++ s
-  where half = round (int2Double (n - length s) / 2.0)
-padRightTo :: Int -> String -> String
-padRightTo n s = s ++ replicate (n - length s) ' '
-
-drawGameState :: Bool -> AppState -> Widget Name
-drawGameState minimode state =
-  let ((xLower, yLower), (xUpper, yUpper)) =
-          if minimode then ((-20, -20), (20, 20)) else state ^. renderArea
-  in  vBox
-        [ hBox [ renderPosition (x, -y) | x <- [xLower .. xUpper] ]
-        | y <- [yLower .. yUpper]
-        ]
- where
-  fillPosition :: Char -> [String]
-  fillPosition c = if minimode then [[c]] else replicate 3 $ replicate 5 c
-  renderPosition :: Position -> Widget Name
-  renderPosition p = clickable p . str . unlines . obscureInvisible p $ maybe
-    (fillPosition ' ')
-    (^. details . to render)
-    (pointsOfInterest !? p)
-  pointsOfInterest :: Map Position Entity'
-  pointsOfInterest =
-    fromListWith
-        (\old new -> maximumBy (comparing (^. base . zIndex)) [old, new])
-      $   state
-      ^.. gameState
-      .   entities
-      .   each
-      .   to (\e -> (e ^. base . position, e))
-  highlights :: [Position]
-  highlights =
-    state
-      ^.. gameState
-      .   entities
-      .   each
-      .   base
-      .   filtered (^. highlighted)
-      .   position
-  hivelings :: [Hiveling']
-  hivelings = state ^.. gameState . entities . each . asHiveling
-  noHivelingSees :: Position -> Bool
-  noHivelingSees p = not $ any (`sees` p) hivelings
-  noHighlightClose :: Position -> Bool
-  noHighlightClose p = all ((> 2.5) . distance p) highlights
-  obscureInvisible :: Position -> [String] -> [String]
-  obscureInvisible p s
-    | state ^. hideUnseen && noHighlightClose p && noHivelingSees p
-    = fillPosition '?'
-    | otherwise
-    = s
-  render :: EntityDetails' -> [String]
-  render d = case d of
-    Nutrition    -> if minimode then ["*"] else [" .*. ", "* * *", " '*' "]
-    HiveEntrance -> if minimode then ["O"] else ["/---\\", "| . |", "\\---/"]
-    Pheromone    -> if minimode then ["~"] else [" .~. ", " ~.~ ", "  ~  "]
-    Obstacle     -> fillPosition 'X'
-    Hiveling h   -> if minimode then ["H"] else renderHiveling h
-  renderHiveling :: HivelingDetails -> [String]
-  renderHiveling h =
-    let carried = [if h ^. hasNutrition then '*' else '.']
-    in  case h ^. orientation of
-          None ->
-            [ "\\ " ++ carried ++ " /" -- \ * /
-            , "/ | \\" --                 / | \
-            , "/   \\" --                 /   \
-            ]
-          Clockwise ->
-            [ "\\ \\ /" --          \ \ /
-            , " ---" ++ carried --   ---*
-            , "/ / \\" --           / / \
-            ]
-          Back ->
-            [ "\\   /" --                 \   /
-            , "\\ | /" --                 \ | /
-            , "/ " ++ carried ++ " \\" -- / * \
-            ]
-          Counterclockwise ->
-            [ "\\ \\ /" --         \ \ /
-            , carried ++ "--- " -- *---
-            , "/ / \\" --          / / \
-            ]
-
-
-scoreWidget :: AppState -> Widget Name
-scoreWidget s =
-  labeledBorder "Score"
-    $  padLeftRight 1
-    .  str
-    .  padCenterTo 18
-    .  show
-    $  s
-    ^. gameState
-    .  score
-
-selectedEntitiesWidget :: AppState -> Widget Name
-selectedEntitiesWidget s = labeledBorder "Selected" $ if null highlights
-  then str $ padCenterTo 20 "Nothing selected"
-  else vBox (highlightBox <$> highlights)
- where
-  highlights :: [Entity']
-  highlights = sortOn
-    (^. base . zIndex . to Down)
-    (s ^.. gameState . entities . each . filtered (^. base . highlighted))
-  highlightBox :: Entity' -> Widget Name
-  highlightBox e =
-    C.hCenter
-      $ labeledBorder (e ^. base . position . to (\(x, y) -> (x, -y)) . to show)
-      .  str
-      .  padCenterTo 20
-      .  unpack
-      .  info
-      $  e
-      ^. details
-  info :: EntityDetails' -> Text
-  info (Hiveling d) = pShowNoColor d
-  info d            = pShowNoColor d
-
-helpWidget :: Widget Name
-helpWidget = labeledBorder "Help" $ vBox (renderCommand <$> commands)
- where
-  commands :: [(String, String)]
-  commands =
-    [ ("?"                      , "Goto this help page")
-    , ("d"                      , "Goto selected entities view")
-    , ("m"                      , "Goto minimap")
-    , ("w"                      , "Goto main page (world)")
-    , ("l"                      , "Goto logs")
-    , ("<Esc>/<Ctrl-c>/<Ctrl-d>", "Quit")
-    , ("<Space>"                , "Pause / resume")
-    , ("<Enter>"                , "Perform single step")
-    , ("1-4"                    , "Set speed")
-    , ("Arrow keys"             , "Move view")
-    , ("v"                      , "Toggle visibility indication")
-    , ("<Mouse-Left>"           , "Select entity for inspection")
-    ]
-  maxKeyLen :: Int
-  maxKeyLen = maximum (length . fst <$> commands)
-  renderCommand :: (String, String) -> Widget Name
-  renderCommand (key, explanation) =
-    str (padRightTo (maxKeyLen + 2) key) <+> str explanation
-
-logsWidget :: AppState -> Widget Name
-logsWidget s =
-  labeledBorder "Logs"
-    $ vBox (str . padRightTo 50 <$> zipWith (++) prefixes logs)
- where
-  logs     = s ^. gameLogs
-  prefixes = (++ ": ") . show <$> [length logs, length logs - 1 .. 0]
-
-worldWidget :: AppState -> Widget Name
-worldWidget s = labeledBorder "World" (drawGameState False s)
-
-minimapWidget :: AppState -> Widget Name
-minimapWidget s = labeledBorder "Minimap" (drawGameState True s)
-
-drawUI :: AppState -> [Widget Name]
-drawUI s = [C.hCenter . labeledBorder "Hive Mind" $ page]
- where
-  page = case s ^. currentPage of
-    HelpPage         -> C.hCenter helpWidget
-    Minimap          -> C.hCenter $ minimapWidget s
-    SelectedEntities -> C.hCenter $ selectedEntitiesWidget s
-    World            -> C.hCenter (scoreWidget s) <=> C.hCenter (worldWidget s)
-    Logs             -> C.hCenter $ logsWidget s
-
-labeledBorder :: String -> Widget a -> Widget a
-labeledBorder label =
-  withBorderStyle BS.unicode . B.borderWithLabel (padLeftRight 1 $ str label)
